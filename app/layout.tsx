@@ -1,6 +1,7 @@
 import type React from "react"
 import type { Metadata } from "next/types"
 import { ThemeProvider } from "@/components/theme-provider"
+import { GeistSans } from 'geist/font/sans'
 import "./globals.css"
 
 export const metadata: Metadata = {
@@ -15,41 +16,8 @@ export default function RootLayout({
   children: React.ReactNode
 }>) {
   return (
-    <html lang="en">
+    <html lang="en" className={GeistSans.variable} suppressHydrationWarning>
       <head>
-        <link rel="preload" href="/fonts/Geist-Regular.woff2" as="font" type="font/woff2" crossOrigin="anonymous" />
-        <link rel="preload" href="/fonts/Geist-Medium.woff2" as="font" type="font/woff2" crossOrigin="anonymous" />
-        <link rel="preload" href="/fonts/Geist-Bold.woff2" as="font" type="font/woff2" crossOrigin="anonymous" />
-        <style
-          dangerouslySetInnerHTML={{
-            __html: `
-          @font-face {
-            font-family: 'Geist Sans';
-            src: url('/fonts/Geist-Regular.woff2') format('woff2');
-            font-weight: 400;
-            font-style: normal;
-            font-display: swap;
-          }
-          @font-face {
-            font-family: 'Geist Sans';
-            src: url('/fonts/Geist-Medium.woff2') format('woff2');
-            font-weight: 500;
-            font-style: normal;
-            font-display: swap;
-          }
-          @font-face {
-            font-family: 'Geist Sans';
-            src: url('/fonts/Geist-Bold.woff2') format('woff2');
-            font-weight: 700;
-            font-style: normal;
-            font-display: swap;
-          }
-          :root {
-            --font-geist-sans: 'Geist Sans', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-          }
-        `,
-          }}
-        />
       </head>
       <body className="font-sans antialiased">
         <ThemeProvider attribute="class" defaultTheme="light" enableSystem disableTransitionOnChange>
