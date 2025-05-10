@@ -59,7 +59,7 @@ export default function Login() {
   return (
     <main className="p-8 md:p-24" data-theme={config.colors.theme}>
       <div className="text-center mb-4">
-        <Link href="/" className="btn btn-ghost btn-sm">
+        <Link href="/" /* className="btn btn-ghost btn-sm" */>
           <svg
             xmlns="http://www.w3.org/2000/svg"
             viewBox="0 0 20 20"
@@ -81,14 +81,15 @@ export default function Login() {
 
       <div className="space-y-8 max-w-xl mx-auto">
         <button
-          className="btn btn-block"
+          /* className="btn btn-block" */
           onClick={(e) =>
             handleSignup(e, { type: "oauth", provider: "google" })
           }
           disabled={isLoading}
         >
           {isLoading ? (
-            <span className="loading loading-spinner loading-xs"></span>
+            /* className="loading loading-spinner loading-xs" */
+            <span /* className="loading loading-spinner loading-xs" */></span>
           ) : (
             <svg
               xmlns="http://www.w3.org/2000/svg"
@@ -130,17 +131,18 @@ export default function Login() {
             value={email}
             autoComplete="email"
             placeholder="tom@cruise.com"
-            className="input input-bordered w-full placeholder:opacity-60"
+            /* className="input input-bordered w-full placeholder:opacity-60" */
             onChange={(e) => setEmail(e.target.value)}
           />
 
           <button
-            className="btn btn-primary btn-block"
+            /* className="btn btn-primary btn-block" */
             disabled={isLoading || isDisabled}
             type="submit"
           >
             {isLoading && (
-              <span className="loading loading-spinner loading-xs"></span>
+              /* className="loading loading-spinner loading-xs" */
+              <span /* className="loading loading-spinner loading-xs" */></span>
             )}
             Send Magic Link
           </button>

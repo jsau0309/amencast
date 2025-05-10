@@ -12,9 +12,10 @@ const Category = ({
   return (
     <Link
       href={`/blog/category/${category.slug}`}
-      className={`badge badge-sm md:badge-md hover:badge-primary ${
+      // FIXME: DaisyUI class removed, replace with Shadcn/UI equivalent
+      /* className={`badge badge-sm md:badge-md hover:badge-primary ${
         extraStyle ? extraStyle : ""
-      }`}
+      }`} */
       title={`Posts in ${category.title}`}
       rel="tag"
     >

@@ -35,14 +35,14 @@ export default async function Author({
     <>
       <section className="max-w-3xl mx-auto flex flex-col md:flex-row gap-8 mt-12 mb-24 md:mb-32">
         <div>
-          <p className="text-xs uppercase tracking-wide text-base-content/80 mb-2">
+          <p className="text-xs uppercase tracking-wide mb-2">
             Authors
           </p>
           <h1 className="font-extrabold text-3xl lg:text-5xl tracking-tight mb-2">
             {author.name}
           </h1>
           <p className="md:text-lg mb-6 md:mb-10 font-medium">{author.job}</p>
-          <p className="md:text-lg text-base-content/80">
+          <p className="md:text-lg">
             {author.description}
           </p>
         </div>
@@ -63,8 +63,6 @@ export default async function Author({
                 <a
                   key={social.name}
                   href={social.url}
-                  className="btn btn-square"
-                  // Using a dark theme? -> className="btn btn-square btn-neutral"
                   title={`Go to ${author.name} profile on ${social.name}`}
                   target="_blank"
                 >

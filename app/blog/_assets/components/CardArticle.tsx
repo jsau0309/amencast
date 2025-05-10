@@ -20,7 +20,7 @@ const CardArticle = ({
   const TitleTag = tag;
 
   return (
-    <article className="card bg-base-200 rounded-box overflow-hidden">
+    <article /* className="card bg-base-200 rounded-box overflow-hidden" */>
       {article.image?.src && (
         <Link
           href={`/blog/${article.slug}`}
@@ -41,7 +41,7 @@ const CardArticle = ({
           </figure>
         </Link>
       )}
-      <div className="card-body">
+      <div /* className="card-body" */>
         {/* CATEGORIES */}
         {showCategory && (
           <div className="flex flex-wrap gap-2">

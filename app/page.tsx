@@ -17,7 +17,7 @@ export default function Page() {
           </p>
 
           <a
-            className="btn btn-primary"
+            /* className="btn btn-primary" */
             href="https://shipfa.st/docs"
             target="_blank"
           >
@@ -36,7 +36,8 @@ export default function Page() {
             </svg>
           </a>
 
-          <Link href="/blog" className="link link-hover text-sm">
+          {/* FIXME: DaisyUI class removed, replace with Shadcn/UI equivalent */}
+          <Link href="/blog" /* className="link link-hover text-sm" */>
             Fancy a blog?
           </Link>
         </section>
