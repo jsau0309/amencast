@@ -1,47 +1,74 @@
-import Link from "next/link";
-import ButtonSignin from "@/components/ButtonSignin";
+import Link from "next/link"
+import { Button } from "@/components/ui/button"
+import { LanguageToggle } from "@/components/language-toggle"
+import { Logo } from "@/components/logo"
+import { Globe } from "@/components/ui/globe"
+import { ShootingStars } from "@/components/ui/shooting-stars"
 
-export default function Page() {
+export default function LandingPage() {
   return (
-    <>
-      <header className="p-4 flex justify-end max-w-7xl mx-auto">
-        <ButtonSignin text="Login" />
+    <div className="flex min-h-screen flex-col">
+      <header className="container flex items-center justify-between py-5">
+        <Logo />
+        <div className="flex items-center gap-4">
+          <Button asChild variant="ghost" size="sm">
+            <Link href="/signin">Sign In</Link>
+          </Button>
+          <LanguageToggle />
+        </div>
       </header>
 
-      <main>
-        <section className="flex flex-col items-center justify-center text-center gap-12 px-8 py-24">
-          <h1 className="text-3xl font-extrabold">Ship Fast ⚡️</h1>
+      <main className="container flex-1 flex flex-col items-center justify-center relative">
+        {/* ShootingStars with only orange color and multiple stars */}
+        <div className="absolute inset-0 overflow-hidden pointer-events-none">
+          <ShootingStars
+            starColor="#FB6415"
+            trailColor="rgba(0, 0, 0, 0.7)"
+            minSpeed={6}
+            maxSpeed={10}
+            minDelay={1200}
+            maxDelay={3600}
+            minStarWidth={6.6}
+            maxStarWidth={13.2}
+            minStarHeight={1.1}
+            maxStarHeight={2.75}
+            maxStars={5}
+          />
+        </div>
 
-          <p className="text-lg opacity-80">
-            The start of your new startup... What are you gonna build?
+        <div className="text-center max-w-[800px] mx-auto mb-8 pt-14 md:pt-[4.85rem] relative z-10">
+          <h1 className="text-5xl md:text-7xl font-bold leading-tight tracking-tighter">
+            Every voice deserves to belong.
+          </h1>
+          <p className="mt-5 text-[1.21rem] text-muted-foreground">
+            Hear the service live, in the language that feels like home.
           </p>
 
-          <a
-            /* className="btn btn-primary" */
-            href="https://shipfa.st/docs"
-            target="_blank"
-          >
-            Documentation & tutorials{" "}
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              viewBox="0 0 20 20"
-              fill="currentColor"
-              className="w-5 h-5"
-            >
-              <path
-                fillRule="evenodd"
-                d="M5 10a.75.75 0 01.75-.75h6.638L10.23 7.29a.75.75 0 111.04-1.08l3.5 3.25a.75.75 0 010 1.08l-3.5 3.25a.75.75 0 11-1.04-1.08l2.158-1.96H5.75A.75.75 0 015 10z"
-                clipRule="evenodd"
-              />
-            </svg>
-          </a>
+          {/* Join Waitlist button right under the tagline */}
+          <div className="mt-8">
+            <Button asChild size="lg" className="px-8 py-6 text-lg">
+              <Link href="/waitlist">Join the Waitlist</Link>
+            </Button>
+          </div>
+        </div>
 
-          {/* FIXME: DaisyUI class removed, replace with Shadcn/UI equivalent */}
-          <Link href="/blog" /* className="link link-hover text-sm" */>
-            Fancy a blog?
-          </Link>
-        </section>
+        {/* Globe Component with increased bottom margin */}
+        <div className="relative w-full h-[400px] md:h-[480px] mb-32">
+          <Globe />
+        </div>
+
+        {/* Explanatory text with proper spacing */}
+        <div className="text-center mb-16"></div>
       </main>
-    </>
-  );
+
+      {/* Footer with proper z-index and background */}
+      <footer className="border-t py-6 md:py-0 relative z-10 bg-background">
+        <div className="container flex flex-col items-center justify-between gap-4 md:h-24 md:flex-row">
+          <p className="text-center text-sm leading-loose text-muted-foreground md:text-left">
+            &copy; {new Date().getFullYear()} AmenCast. All rights reserved.
+          </p>
+        </div>
+      </footer>
+    </div>
+  )
 }

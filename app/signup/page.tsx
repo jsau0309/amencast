@@ -3,7 +3,7 @@
 import { Logo } from "@/components/logo"
 import { LanguageToggle } from "@/components/language-toggle"
 
-export default function SignInPage() {
+export default function SignUpPage() {
   return (
     <div className="flex min-h-screen flex-col">
       <header className="container flex items-center justify-between py-5">
@@ -12,7 +12,10 @@ export default function SignInPage() {
       </header>
 
       <main className="container flex-1 flex items-center justify-center">
-        {/* Clerk sign-in component will be rendered here */}
+        <div className="w-full max-w-md">
+          {/* Clerk SignUp component will be rendered here */}
+          {/* The actual Clerk component will be added when Clerk is integrated */}
+        </div>
       </main>
     </div>
   )
