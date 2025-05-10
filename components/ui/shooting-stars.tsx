@@ -74,7 +74,7 @@ export const ShootingStars: React.FC<ShootingStarsProps> = ({
       const gradientId = `gradient-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`
 
       const newStar: ShootingStar = {
-        id: Date.now(),
+        id: Date.now() + Math.random(),
         x,
         y,
         angle,
