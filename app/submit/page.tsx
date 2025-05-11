@@ -13,6 +13,7 @@ import { SettingsButton } from "@/components/settings-button"
 import { Loader2, Youtube, Volume2, Video } from "lucide-react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
+import { SignedIn, SignedOut, UserButton, SignInButton } from "@clerk/nextjs"
 
 export default function SubmitPage() {
   const [url, setUrl] = useState("")
@@ -103,6 +104,12 @@ export default function SubmitPage() {
         <div className="flex items-center gap-2">
           <SettingsButton />
           <LanguageToggle />
+          <SignedIn>
+            <UserButton afterSignOutUrl="/" />
+          </SignedIn>
+          <SignedOut>
+            <SignInButton />
+          </SignedOut>
         </div>
       </header>
       <main className="container flex-1 py-10">

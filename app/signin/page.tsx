@@ -2,6 +2,7 @@
 
 import { Logo } from "@/components/logo"
 import { LanguageToggle } from "@/components/language-toggle"
+import { SignIn } from '@clerk/nextjs'
 
 export default function SignInPage() {
   return (
@@ -12,7 +13,7 @@ export default function SignInPage() {
       </header>
 
       <main className="container flex-1 flex items-center justify-center">
-        {/* Clerk sign-in component will be rendered here */}
+        <SignIn routing="hash" />
       </main>
     </div>
   )

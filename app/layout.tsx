@@ -3,6 +3,7 @@ import type { Metadata } from "next/types";
 import { ThemeProvider } from "@/components/theme-provider";
 import { GeistSans } from 'geist/font/sans'; // Import GeistSans
 import "./globals.css";
+import { ClerkProvider } from '@clerk/nextjs';
 
 export const metadata: Metadata = {
   title: "AmenCast | Real-Time Spanish Translation for Church Livestreams",
@@ -18,20 +19,21 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    // Apply the font variable directly from the import
-    <html lang="en" className={GeistSans.variable} suppressHydrationWarning>
-      <head />
-      {/* 
-        Your body has className="font-sans".
-        Your tailwind.config.js theme.extend.fontFamily.sans should be:
-        ['var(--font-geist-sans)', ...fallbacks]
-        The `geist` package ensures --font-geist-sans is defined by the className on <html>.
-      */}
-      <body className="font-sans antialiased">
-        <ThemeProvider attribute="class" defaultTheme="light" enableSystem disableTransitionOnChange>
-          {children}
-        </ThemeProvider>
-      </body>
-    </html>
+    <ClerkProvider>
+      <html lang="en" className={GeistSans.variable} suppressHydrationWarning>
+        <head />
+        {/* 
+          Your body has className="font-sans".
+          Your tailwind.config.js theme.extend.fontFamily.sans should be:
+          ['var(--font-geist-sans)', ...fallbacks]
+          The `geist` package ensures --font-geist-sans is defined by the className on <html>.
+        */}
+        <body className="font-sans antialiased">
+          <ThemeProvider attribute="class" defaultTheme="light" enableSystem disableTransitionOnChange>
+            {children}
+          </ThemeProvider>
+        </body>
+      </html>
+    </ClerkProvider>
   );
 }

@@ -7,6 +7,7 @@ import { Logo } from "@/components/logo"
 import { LanguageToggle } from "@/components/language-toggle"
 import { SettingsButton } from "@/components/settings-button"
 import { Volume2, VolumeX, Video, X, Headphones } from "lucide-react"
+import { SignedIn, SignedOut, UserButton, SignInButton } from "@clerk/nextjs"
 
 export default function LivestreamPage() {
   const searchParams = useSearchParams()
@@ -118,6 +119,12 @@ export default function LivestreamPage() {
           <div className="flex items-center gap-2">
             <SettingsButton />
             <LanguageToggle />
+            <SignedIn>
+              <UserButton afterSignOutUrl="/" />
+            </SignedIn>
+            <SignedOut>
+              <SignInButton />
+            </SignedOut>
           </div>
         </header>
         <main className="container flex-1 flex flex-col items-center justify-center">
@@ -202,6 +209,12 @@ export default function LivestreamPage() {
         <div className="flex items-center gap-2">
           <SettingsButton />
           <LanguageToggle />
+          <SignedIn>
+            <UserButton afterSignOutUrl="/" />
+          </SignedIn>
+          <SignedOut>
+            <SignInButton />
+          </SignedOut>
         </div>
       </header>
       <main className="container flex-1 py-6">
