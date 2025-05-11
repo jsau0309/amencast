@@ -4,6 +4,7 @@ import { ThemeProvider } from "@/components/theme-provider";
 import { GeistSans } from 'geist/font/sans'; // Import GeistSans
 import "./globals.css";
 import { ClerkProvider } from '@clerk/nextjs';
+import { Toaster } from "@/components/ui/sonner"; // Import Toaster
 
 export const metadata: Metadata = {
   title: "AmenCast | Real-Time Spanish Translation for Church Livestreams",
@@ -31,6 +32,7 @@ export default function RootLayout({
         <body className="font-sans antialiased">
           <ThemeProvider attribute="class" defaultTheme="light" enableSystem disableTransitionOnChange>
             {children}
+            <Toaster /> {/* Add Toaster here */}
           </ThemeProvider>
         </body>
       </html>

@@ -2,7 +2,7 @@
 
 import type React from "react"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -13,88 +13,126 @@ import { SettingsButton } from "@/components/settings-button"
 import { Loader2, Youtube, Volume2, Video } from "lucide-react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
-import { SignedIn, SignedOut, UserButton, SignInButton } from "@clerk/nextjs"
+import { SignedIn, SignedOut, UserButton, SignInButton, useAuth } from "@clerk/nextjs"
+
+// YouTube URL Validation Regex (includes common patterns including /live/)
+const YOUTUBE_URL_REGEX = /^((?:https?:)?\/\/)?((?:www|m)\.)?((?:youtube(-nocookie)?\.com|youtu.be))(\/(?:[\w\-]+\?v=|embed\/|live\/|v\/)?)([\w\-]{11})(?:\S+)?$/;
+
+function isValidYouTubeUrl(url: string): boolean {
+  if (!url) return false;
+  return YOUTUBE_URL_REGEX.test(url);
+}
 
 export default function SubmitPage() {
   const [url, setUrl] = useState("")
-  const [error, setError] = useState("")
+  const [urlError, setUrlError] = useState("") // Specific error for URL format
+  const [submissionError, setSubmissionError] = useState("") // General error for submission process
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [language, setLanguage] = useState("es") // Default to Spanish
   const [format, setFormat] = useState("video-audio") // Default to Video+Audio
   const [currentStep, setCurrentStep] = useState(1)
   const router = useRouter()
+  const { getToken } = useAuth();
+
+  const handleUrlChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const newUrl = e.target.value;
+    setUrl(newUrl);
+    if (newUrl.trim() && !isValidYouTubeUrl(newUrl)) {
+      setUrlError("Please enter a valid YouTube URL format (e.g., youtube.com/watch?v=... or youtu.be/... or youtube.com/live/...).");
+    } else {
+      setUrlError("");
+    }
+    setSubmissionError(""); // Clear general submission error when URL changes
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault()
-    setIsSubmitting(true)
-    setError("")
+    e.preventDefault();
+    setSubmissionError(""); // Clear previous submission errors
+
+    if (!isValidYouTubeUrl(url)) {
+      setUrlError("Please enter a valid YouTube URL format.");
+      setSubmissionError("Cannot proceed: invalid YouTube URL."); // Also set general error for clarity
+      return;
+    }
+    setUrlError(""); // Clear URL specific error if it was valid on submit
+
+    setIsSubmitting(true);
 
     try {
-      // Basic validation for YouTube URL
-      if (!url.includes("youtube.com/watch") && !url.includes("youtu.be/")) {
-        setError("Please enter a valid YouTube URL")
-        setIsSubmitting(false)
-        return
+      const clerkToken = await getToken();
+      if (!clerkToken) {
+        setSubmissionError("Authentication token not found. Please ensure you are logged in.");
+        setIsSubmitting(false);
+        return;
       }
 
-      // Extract video ID from URL
-      let videoId = ""
+      const response = await fetch("/api/streams", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${clerkToken}`,
+        },
+        body: JSON.stringify({ youtubeUrl: url }),
+      });
 
-      if (url.includes("youtube.com/watch")) {
-        try {
-          const urlParams = new URLSearchParams(new URL(url).search)
-          videoId = urlParams.get("v") || ""
-        } catch (err) {
-          setError("Invalid URL format")
-          setIsSubmitting(false)
-          return
-        }
-      } else if (url.includes("youtu.be/")) {
-        videoId = url.split("youtu.be/")[1]?.split("?")[0]
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ error: "An unknown error occurred during stream creation." }));
+        console.error("API Error Response:", errorData);
+        setSubmissionError(errorData.error || `Failed to create stream: ${response.statusText}`);
+        setIsSubmitting(false);
+        return;
       }
 
-      if (!videoId) {
-        setError("Could not extract video ID from URL")
-        setIsSubmitting(false)
-        return
+      const result = await response.json();
+      const { streamId, livekitToken } = result;
+
+      if (!streamId || !livekitToken) {
+        setSubmissionError("Failed to retrieve stream details from the server.");
+        setIsSubmitting(false);
+        return;
       }
 
-      // Simulate a brief loading state
-      await new Promise((resolve) => setTimeout(resolve, 500))
+      console.log(`Redirecting to: /live?streamId=${streamId}&token=${livekitToken}&lang=${language}&format=${format}`);
+      router.push(`/live?streamId=${streamId}&token=${livekitToken}&lang=${language}&format=${format}`);
 
-      // Redirect to livestream page with video ID and format preference
-      console.log(`Redirecting to: /live?v=${videoId}&lang=${language}&format=${format}`)
-      router.push(`/live?v=${videoId}&lang=${language}&format=${format}`)
-    } catch (err) {
-      console.error("Error during submission:", err)
-      setError("An unexpected error occurred. Please try again.")
-      setIsSubmitting(false)
+    } catch (err: any) {
+      console.error("Error during submission:", err);
+      setSubmissionError(err.message || "An unexpected error occurred. Please try again.");
+      setIsSubmitting(false);
     }
-  }
+  };
 
   const nextStep = () => {
-    if (currentStep === 1 && !url) {
-      setError("Please enter a YouTube URL")
-      return
+    setSubmissionError(""); // Clear general submission error on step change attempt
+    if (currentStep === 1) {
+      if (!url.trim()) {
+        setUrlError("Please enter a YouTube URL.");
+        return;
+      }
+      if (!isValidYouTubeUrl(url)) {
+        setUrlError("Please enter a valid YouTube URL format to continue.");
+        return;
+      }
+      setUrlError(""); // Clear URL error if valid
     }
 
     if (currentStep < 3) {
-      setCurrentStep(currentStep + 1)
-      setError("")
+      setCurrentStep(currentStep + 1);
     }
   }
 
   const prevStep = () => {
     if (currentStep > 1) {
-      setCurrentStep(currentStep - 1)
-      setError("")
+      setCurrentStep(currentStep - 1);
+      setUrlError(""); // Clear URL error when going back
+      setSubmissionError("");
     }
   }
 
   // For testing - direct link to live page
   const goToLivePageTest = () => {
     const testVideoId = "jfKfPfyJRdk" // Lo-fi beats video as a test
-    window.location.href = `/live?v=${testVideoId}&lang=${language}&format=${format}`
+    window.location.href = `/live?v=${testVideoId}&lang=${language}&format=${format}`;
   }
 
   return (
@@ -138,11 +176,12 @@ export default function SubmitPage() {
                         className="pl-10"
                         placeholder="https://www.youtube.com/watch?v=..."
                         value={url}
-                        onChange={(e) => setUrl(e.target.value)}
+                        onChange={handleUrlChange}
                         required
                       />
                     </div>
-                    {error && <p className="text-sm text-destructive">{error}</p>}
+                    {urlError && <p className="text-sm text-destructive">{urlError}</p>}
+                    {submissionError && !urlError && <p className="text-sm text-destructive">{submissionError}</p>}
                   </div>
                   <div className="pt-4">
                     <Button type="button" onClick={nextStep} className="w-full h-11 text-base">
