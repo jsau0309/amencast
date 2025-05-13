@@ -2,7 +2,7 @@
 
 generator client {
   provider = "prisma-client-js"
-  output   = "node_modules/.prisma/client"
+  // output   = "node_modules/.prisma/client" // Commented out to use default location (root node_modules)
 }
 
 datasource db {
@@ -21,7 +21,7 @@ model Stream {
   id               String    @id @default(uuid())
   youtube_video_id String
   status           String // e.g., "pending", "processing", "live", "ended", "error"
-  listener_id      String    // Clerk User ID. SRS: "listener_id uuid FK → users"
+  listener_id      String // Clerk User ID. SRS: "listener_id uuid FK → users"
   started_at       DateTime?
   ended_at         DateTime?
 
@@ -46,7 +46,7 @@ model UsageEvent {
 model Feedback {
   id         BigInt   @id @default(autoincrement())
   stream_id  String
-  code       String   // e.g., "AUDIO_LAG", "WRONG_VERSE", "OTHER"
+  code       String // e.g., "AUDIO_LAG", "WRONG_VERSE", "OTHER"
   note       String?
   created_at DateTime @default(now())
   // Consider adding listener_id String? from Clerk for direct feedback ownership as discussed in plan.
@@ -57,10 +57,10 @@ model Feedback {
 }
 
 model Transcript {
-  id        BigInt  @id @default(autoincrement())
+  id        BigInt @id @default(autoincrement())
   stream_id String
-  start_ts  Float   @db.Real // Using Real for Float, common for timestamps
-  end_ts    Float   @db.Real
+  start_ts  Float  @db.Real // Using Real for Float, common for timestamps
+  end_ts    Float  @db.Real
   text_en   String
   text_es   String
 
@@ -69,15 +69,18 @@ model Transcript {
   @@map("transcripts")
 }
 
+// Bible Verses Table
 model BibleVerse {
-  book       Int    @db.SmallInt
-  chapter    Int    @db.SmallInt
-  verse      Int    @db.SmallInt
-  text_rvr60 String
-  text_nvi   String
+  id      String  @id @default(uuid())
+  book    String
+  chapter Int
+  verse   Int
+  text_en String? @db.Text // KJV text
+  text_es String  @db.Text // BLM text
 
-  @@id([book, chapter, verse])
-  @@map("bible_es")
+  @@unique([book, chapter, verse])
+  @@index([book])
+  @@map("bible_verses") // Explicitly map to keep table name snake_case
 }
 
 // _prisma_migrations table will be managed by Prisma

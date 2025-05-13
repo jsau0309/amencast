@@ -1,0 +1,26 @@
+{
+  "name": "gpu-worker",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": "",
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "^22.15.17",
+    "typescript": "^5.8.3"
+  },
+  "dependencies": {
+    "@prisma/client": "^6.7.0",
+    "axios": "^1.9.0",
+    "better-sqlite3": "^11.10.0",
+    "dotenv": "^16.5.0",
+    "ioredis": "^5.6.1",
+    "livekit-server-sdk": "^2.13.0",
+    "openai": "^4.98.0"
+  }
+}

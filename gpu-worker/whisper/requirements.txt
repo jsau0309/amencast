@@ -1,0 +1,7 @@
+faster-whisper
+torch
+torchaudio
+# ffmpeg is often a system dependency, but some libraries might bundle it or require it.
+# Ensure ffmpeg is available in the environment where the worker runs (e.g., via apt-get install ffmpeg in Dockerfile)
+# Add other Python dependencies if needed, e.g., for audio downloading if not handled by Node.js:
+# requests 

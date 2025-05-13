@@ -1,7 +1,7 @@
 # See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
 
 # dependencies
-/node_modules
+node_modules/
 /.pnp
 .pnp.js
 
@@ -41,3 +41,14 @@ public/sitemap.xml
 public/sitemap-0.xml
 # clerk configuration (can include secrets)
 /.clerk/
+
+# Bible data source files (large, for one-time DB load)
+bible-data/
+
+# Compiled script outputs
+dist-scripts/
+
+# GPU worker build output (also in gpu-worker/.gitignore, but good to have here too)
+gpu-worker/dist/
+
+
