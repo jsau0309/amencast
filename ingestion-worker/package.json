@@ -1,0 +1,32 @@
+{
+  "name": "ingestion-worker",
+  "version": "1.0.0",
+  "description": "Worker to ingest YouTube audio, process it, and queue for GPU worker",
+  "main": "dist/index.js",
+  "scripts": {
+    "dev": "ts-node src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [
+    "amencast",
+    "youtube",
+    "ingestion",
+    "worker"
+  ],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@supabase/supabase-js": "^2.45.0",
+    "dotenv": "^16.4.5",
+    "ioredis": "^5.4.1",
+    "ytdl-core": "npm:@distube/ytdl-core@^4.16.10"
+  },
+  "devDependencies": {
+    "@types/ioredis": "^5.0.0",
+    "@types/node": "^20.16.0",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.5.4"
+  }
+}

@@ -4,9 +4,10 @@ import { z } from 'zod';
 import { prisma } from '@/lib/utils'; // Adjusted path based on our previous prisma instance location
 import { AccessToken } from 'livekit-server-sdk';
 
-// Input schema for validation
+// Updated input schema to include optional languageTarget
 const CreateStreamSchema = z.object({
   youtubeUrl: z.string().url({ message: "Invalid YouTube URL" }),
+  languageTarget: z.string().optional(), // e.g., "es", "en"
 });
 
 export async function POST(req: NextRequest) {
@@ -26,7 +27,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const { youtubeUrl } = validationResult.data;
+    const { youtubeUrl, languageTarget } = validationResult.data;
 
     // Database Interaction (Prisma)
     const newStream = await prisma.stream.create({
@@ -34,23 +35,23 @@ export async function POST(req: NextRequest) {
         youtube_video_id: youtubeUrl,
         status: "pending", // Initial status
         listener_id: clerkUserId,
+        language_target: languageTarget || 'es', // Save languageTarget, default to 'es' if not provided
         started_at: new Date(),
       },
     });
 
     // LiveKit Token Generation
-    const livekitHost = process.env.LIVEKIT_HOST;
+    const livekitHost = process.env.LIVEKIT_HOST; // Changed from LIVEKIT_URL to LIVEKIT_HOST
     const livekitApiKey = process.env.LIVEKIT_API_KEY;
     const livekitApiSecret = process.env.LIVEKIT_API_SECRET;
 
     if (!livekitHost || !livekitApiKey || !livekitApiSecret) {
-      console.error('LiveKit environment variables are not set.');
-      // Do not send sensitive error details to client in production
+      console.error('LiveKit environment variables (LIVEKIT_HOST, LIVEKIT_API_KEY, LIVEKIT_API_SECRET) are not set.');
       return NextResponse.json({ error: "Stream created, but media token generation failed. Configuration error." }, { status: 500 }); 
     }
 
     const roomName = newStream.id; // Use stream ID as room name
-    const participantName = clerkUserId; // Use clerkUserId as participant name/identity
+    const participantName = clerkUserId; // Or a more specific worker identity for publishing if needed later
 
     const at = new AccessToken(livekitApiKey, livekitApiSecret, {
       identity: participantName,

@@ -5,19 +5,30 @@ import path from 'path';
 const prisma = new PrismaClient();
 
 const BIBLE_DATA_PATH = path.resolve(__dirname, '../bible-data');
-// const ENG_TRANSLATION_ID = 'eng_kjv'; // No longer needed for primary loading logic
 const SPA_TRANSLATION_ID = 'spa_blm';
 
 interface BookMetadata {
-  id: string; // e.g., "GEN"
-  name: string; // e.g., "Genesis"
+  id: string;
+  name: string;
   numberOfChapters: number;
+}
+
+interface BooksFileStructure {
+  translation: object; // Or a more specific type if needed
+  books: BookMetadata[];
+}
+
+interface VerseContentItem {
+    type?: string; // For note objects e.g. { noteId: number, type: 'note' (though not always present) }
+    noteId?: number;
+    // Allow any other properties that might exist on note objects
+    [key: string]: any;
 }
 
 interface ChapterVerse {
   type: 'verse';
   number: number;
-  content: (string | { noteId: number })[];
+  content: (string | VerseContentItem)[]; // Array can contain strings or objects
 }
 
 interface ChapterData {
@@ -29,89 +40,87 @@ interface ChapterData {
 }
 
 async function loadBibleData() {
-  console.log('Starting Spanish Bible data load (spa_blm)...');
+  console.log('Starting Spanish Bible data load...');
+  let totalVersesProcessed = 0;
 
   try {
-    // 1. Read Spanish book metadata
-    const booksMetaPath = path.join(BIBLE_DATA_PATH, SPA_TRANSLATION_ID, 'books.json');
-    console.log(`Reading book metadata from: ${booksMetaPath}`);
-    const booksMetaContent = await fs.readFile(booksMetaPath, 'utf-8');
-    const booksMetadata: { books: BookMetadata[] } = JSON.parse(booksMetaContent);
-    const booksToProcess = booksMetadata.books;
-    console.log(`Found metadata for ${booksToProcess.length} books in Spanish translation.`);
+    const spaBooksMetaPath = path.join(BIBLE_DATA_PATH, SPA_TRANSLATION_ID, 'books.json');
+    console.log(`Reading Spanish books metadata from: ${spaBooksMetaPath}`);
+    const spaBooksMetaJson = await fs.readFile(spaBooksMetaPath, 'utf-8');
+    const parsedBooksFile = JSON.parse(spaBooksMetaJson) as BooksFileStructure;
+    const spaBooksMetadata = parsedBooksFile.books;
 
-    let totalVersesProcessed = 0;
+    if (!Array.isArray(spaBooksMetadata)) {
+        console.error('Error: Parsed books metadata is not an array. Check the structure of books.json.');
+        console.error('Parsed data:', parsedBooksFile);
+        throw new Error('Parsed books metadata is not an array.');
+    }
+    console.log(`Loaded metadata for ${spaBooksMetadata.length} Spanish books.`);
 
-    // 2. Iterate through books
-    for (const bookMeta of booksToProcess) {
-      console.log(`Processing book: ${bookMeta.name} (${bookMeta.id})`);
-      const bookId = bookMeta.id;
+    for (const bookMeta of spaBooksMetadata) {
+      console.log(`Processing Spanish book: ${bookMeta.name} (${bookMeta.id})`);
+      const spaBookPath = path.join(BIBLE_DATA_PATH, SPA_TRANSLATION_ID, bookMeta.id);
 
-      // 3. Iterate through chapters
       for (let chapterNum = 1; chapterNum <= bookMeta.numberOfChapters; chapterNum++) {
-        const spaChapterPath = path.join(BIBLE_DATA_PATH, SPA_TRANSLATION_ID, bookId, `${chapterNum}.json`);
-
+        const versesToCreate: any[] = [];
         try {
-          // 4. Read Spanish chapter file
-          const spaChapterContent = await fs.readFile(spaChapterPath, 'utf-8');
-          const spaChapterData: ChapterData = JSON.parse(spaChapterContent);
-          const spaVerses = spaChapterData.chapter.content;
+          const spaChapterPath = path.join(spaBookPath, `${chapterNum}.json`);
+          const spaChapterJson = await fs.readFile(spaChapterPath, 'utf-8');
+          const spaChapterData = JSON.parse(spaChapterJson) as ChapterData;
 
-          // 5. Prepare verse data for insertion
-          const versesToCreate = [];
-          for (const spaVerse of spaVerses) {
-            if (spaVerse.type !== 'verse') {
-              console.warn(`Non-verse item encountered in ${bookId} Chapter ${chapterNum}. Skipping item.`);
-              continue;
-            }
+          for (const verseData of spaChapterData.chapter.content) {
+            if (verseData.type === 'verse') {
+              const spanishVerseText = verseData.content
+                .filter(c => typeof c === 'string')
+                .join(' ').trim();
 
-            const textEs = spaVerse.content.find(item => typeof item === 'string') as string | undefined;
-            const verseNum = spaVerse.number;
-
-            if (!textEs) {
-                console.warn(`Missing Spanish text for verse ${verseNum} in ${bookId} Chapter ${chapterNum}. Skipping verse.`);
+              if (!spanishVerseText) {
+                // Optionally log missing text, but can be verbose
+                // console.log(`Missing Spanish text for verse ${verseData.number} in ${bookMeta.id} Chapter ${chapterNum}. Skipping verse.`);
                 continue;
-            }
+              }
 
-            versesToCreate.push({
-              book: bookId,
-              chapter: chapterNum,
-              verse: verseNum,
-              text_en: null, // Set text_en to null
-              text_es: textEs,
-            });
+              versesToCreate.push({
+                book: bookMeta.id,
+                chapter: chapterNum,
+                verse: verseData.number,
+                text_es: spanishVerseText,
+                text_en: null, // Explicitly set English to null
+              });
+            }
           }
 
-          // 6. Insert verses into Supabase (using createMany for efficiency)
           if (versesToCreate.length > 0) {
             const result = await prisma.bibleVerse.createMany({
               data: versesToCreate,
-              skipDuplicates: true, // Important if script is run multiple times
+              skipDuplicates: true, // Use skipDuplicates for all chapters
             });
             totalVersesProcessed += result.count;
-            console.log(`  Chapter ${chapterNum}: Inserted ${result.count} Spanish verses.`);
+            if (result.count > 0) {
+                console.log(`  Chapter ${chapterNum} (${bookMeta.id}): Successfully INSERTED ${result.count} new Spanish verses.`);
+            } else if (versesToCreate.length > 0 && result.count === 0) {
+                // This means verses were prepared, but Prisma inserted 0 (likely all duplicates of already existing data)
+                // console.log(`  Chapter ${chapterNum} (${bookMeta.id}): Prisma reported 0 new verses inserted (had ${versesToCreate.length} to process). All prepared verses likely already existed or were skipped.`);
+            }
+          } else {
+            // console.log(`  Chapter ${chapterNum} (${bookMeta.id}): No new Spanish verses were prepared to insert for this chapter.`);
           }
-
         } catch (fileError: any) {
           if (fileError.code === 'ENOENT') {
-            console.warn(`Missing chapter file for ${bookId} Chapter ${chapterNum}. Path: ${spaChapterPath}. Skipping.`);
+            console.warn(`  Skipping Spanish chapter ${chapterNum} for book ${bookMeta.id}: File not found at ${path.join(spaBookPath, `${chapterNum}.json`)}`);
           } else {
-            console.error(`Error processing ${bookId} Chapter ${chapterNum}:`, fileError);
+            console.error(`  Skipping Spanish chapter ${chapterNum} for book ${bookMeta.id} due to file error: ${fileError.message}`);
           }
         }
-      } // End chapter loop
-    } // End book loop
-
-    console.log(`
-Spanish Bible data loading complete. Total verses processed/inserted: ${totalVersesProcessed}`);
-
-  } catch (error) {
-    console.error('An error occurred during the Spanish Bible data load process:', error);
+      }
+    }
+    console.log(`Spanish Bible data loading complete. Total new verses inserted: ${totalVersesProcessed}`);
+  } catch (error: any) {
+    console.error('Error loading Spanish Bible data:', error.message, error.stack);
   } finally {
     await prisma.$disconnect();
     console.log('Prisma client disconnected.');
   }
 }
 
-// Run the loading function
-loadBibleData(); 
+loadBibleData();

@@ -38,7 +38,7 @@ export class LiveKitTokenManager {
       room: this.streamId,
       roomJoin: true,
       canPublish: true,
-      canPublishData: true, 
+      canPublishData: true,
       canSubscribe: false, // Worker typically doesn't need to subscribe to other tracks
     };
     at.addGrant(grantOptions);

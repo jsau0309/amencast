@@ -43,7 +43,7 @@ public/sitemap-0.xml
 /.clerk/
 
 # Bible data source files (large, for one-time DB load)
-bible-data/
+bible-data/ 
 
 # Compiled script outputs
 dist-scripts/

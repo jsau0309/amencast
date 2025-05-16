@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getAuth } from '@clerk/nextjs/server';
 import { prisma } from '@/lib/utils'; // Ensure this path is correct
 
+export const dynamic = 'force-dynamic'; // Added to ensure dynamic behavior
+
 interface RouteParams {
   params: {
     streamId: string;
