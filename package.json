@@ -1,13 +1,22 @@
 {
-  "name": "my-v0-project",
-  "version": "0.1.0",
+  "name": "amencast-monorepo",
+  "version": "1.0.0",
   "private": true,
   "scripts": {
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "dev:websocket": "npm run dev --workspace=websocket-server",
+    "dev:ingestion": "npm run dev --workspace=ingestion-worker",
+    "dev:gpu": "npm run dev --workspace=gpu-worker",
+    "test:client": "npm run test:client --workspace=websocket-server",
+    "dev:services": "npm run dev:websocket & npm run dev:ingestion & npm run dev:gpu" 
   },
+  "workspaces": [
+    "app",
+    "services/*"
+  ],
   "dependencies": {
     "@clerk/nextjs": "^6.19.2",
     "@hookform/resolvers": "^3.9.1",
@@ -83,6 +92,7 @@
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "better-sqlite3": "^11.10.0",
+    "concurrently": "^8.2.2",
     "dotenv": "^16.5.0",
     "jsonwebtoken": "^9.0.2",
     "postcss": "^8",
