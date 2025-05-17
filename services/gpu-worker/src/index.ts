@@ -156,55 +156,51 @@ async function processGpuJob(job: GpuJob): Promise<void> {
     });
     console.log('[GPWorker] ElevenLabs TTS response received. Type:', typeof ttsResponse, 'Is it a stream?', ttsResponse instanceof Readable);
     
-    const ttsFileWriter = fs.createWriteStream(temporaryTtsPath);
+    const ttsFileWriter = fs.createWriteStream(temporaryTtsPath!);
 
-    if (ttsResponse instanceof Readable) {
-        console.log('[GPWorker] TTS response is a Readable stream, piping to file...');
-        ttsResponse.pipe(ttsFileWriter);
-        await new Promise<void>((resolve, reject) => {
-            ttsFileWriter.on('finish', resolve);
-            ttsFileWriter.on('error', (err) => {
-                console.error('[GPWorker] Error writing TTS file from stream:', err);
-                reject(err);
-            });
-            ttsResponse.on('error', (err) => { 
-                console.error('[GPWorker] Error on ElevenLabs TTS source stream:', err);
-                reject(err);
-            });
-        });
-    } else if (ttsResponse && typeof (ttsResponse as any).then === 'function') { 
-        console.warn('[GPWorker] ElevenLabs TTS response seems to be a Promise, awaiting and checking content.');
-        const resolvedContent = await ttsResponse;
-        if (Buffer.isBuffer(resolvedContent)) {
-            ttsFileWriter.write(resolvedContent);
-            ttsFileWriter.end();
-            await new Promise<void>((resolve, reject) => {
-                ttsFileWriter.on('finish', resolve);
-                ttsFileWriter.on('error', reject);
-            });
+    // Handle the stream from ElevenLabs: it might be an AsyncIterable<Buffer or Uint8Array>
+    console.log('[GPWorker] Iterating ElevenLabs TTS response...');
+    let chunkCount = 0;
+    for await (const chunk of (ttsResponse as AsyncIterable<any>)) {
+        chunkCount++;
+        if (chunk instanceof Buffer) {
+            ttsFileWriter.write(chunk);
+        } else if (chunk instanceof Uint8Array) { // Explicitly handle Uint8Array
+            ttsFileWriter.write(chunk); // fs.WriteStream can handle Uint8Array directly
+        } else if (typeof chunk === 'string') { 
+            console.warn('[GPWorker] ElevenLabs TTS async chunk is a string, converting to Buffer.');
+            ttsFileWriter.write(Buffer.from(chunk));
+        } else if (chunk && typeof chunk === 'object' && (chunk as any).data instanceof Buffer) {
+            // Fallback for some SDKs that might wrap buffer in { data: Buffer }
+            console.log('[GPWorker] ElevenLabs TTS chunk is an object with a data Buffer.');
+            ttsFileWriter.write((chunk as any).data);
         } else {
-            console.error('[GPWorker] ElevenLabs TTS (awaited) did not resolve to a Buffer. Content:', resolvedContent);
-            throw new Error('ElevenLabs TTS response was a Promise but did not resolve to a Buffer.');
-        }
-    } else if (ttsResponse && Symbol.asyncIterator in Object(ttsResponse)) { 
-        console.log('[GPWorker] TTS response is an AsyncIterable, iterating chunks...');
-        for await (const chunk of (ttsResponse as AsyncIterable<any>)) {
-            if (chunk instanceof Buffer) {
-                ttsFileWriter.write(chunk);
-            } else {
-                console.warn('[GPWorker] ElevenLabs TTS async chunk is not a Buffer:', typeof chunk);
-                ttsFileWriter.write(Buffer.from(chunk)); 
+            console.error('[GPWorker] Unhandled or unexpected chunk type from ElevenLabs TTS stream. Chunk #', chunkCount, 'Type:', typeof chunk, 'Value:', chunk);
+            // Depending on strictness, you might throw an error here or try Buffer.from(chunk) as a last resort if applicable
+            // For now, we'll attempt Buffer.from() for unknown objects that aren't buffers/uint8arrays/strings
+            try {
+                console.warn('[GPWorker] Attempting Buffer.from() on unknown chunk type.');
+                ttsFileWriter.write(Buffer.from(chunk as any)); 
+            } catch (conversionError) {
+                console.error('[GPWorker] Failed to convert unknown chunk to Buffer. Skipping chunk.', conversionError);
             }
         }
-        ttsFileWriter.end();
-        await new Promise<void>((resolve, reject) => { 
-            ttsFileWriter.on('finish', resolve);
-            ttsFileWriter.on('error', reject);
-        });
-    } else {
-        console.error('[GPWorker] ElevenLabs TTS did not return a recognized stream, Promise, or AsyncIterable. Response:', ttsResponse);
-        throw new Error('ElevenLabs TTS did not return a recognized stream, Promise, or AsyncIterable.');
     }
+    if (chunkCount === 0) {
+        console.warn('[GPWorker] ElevenLabs TTS stream iterable was empty. No data written to file.');
+        // This might indicate an issue with the TTS request or an empty audio response
+        // Consider throwing an error if an empty audio file is not acceptable
+        // throw new Error("ElevenLabs TTS returned no audio data.");
+    }
+    ttsFileWriter.end();
+
+    await new Promise<void>((resolve, reject) => {
+        ttsFileWriter.on('finish', resolve);
+        ttsFileWriter.on('error', (err) => {
+            console.error('[GPWorker] Error writing TTS file from iterated chunks:', err);
+            reject(err);
+        });
+    });
 
     console.log(`[GPWorker] TTS successful. Synthesized audio at: ${temporaryTtsPath}`);
 
