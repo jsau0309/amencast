@@ -4,7 +4,7 @@ import { v4 as uuidv4 } from 'uuid'; // For generating clientRequestId
 
 // Define the server URL from your websocket-server config or .env for consistency
 // For this client, we can hardcode it for simplicity or use a similar config approach if it grows
-const SERVER_URL = process.env.WEBSOCKET_SERVER_URL || 'http://localhost:3000'; // Assuming port 3000 from websocket-server config
+const SERVER_URL = process.env.WEBSOCKET_SERVER_URL || 'http://localhost:3001'; // Changed port to 3001
 
 console.log(`[TestClient] Connecting to WebSocket server at ${SERVER_URL}...`);
 

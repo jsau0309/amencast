@@ -14,9 +14,11 @@ import { Loader2, Youtube, Volume2, Video } from "lucide-react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
 import { SignedIn, SignedOut, UserButton, SignInButton, useAuth } from "@clerk/nextjs"
+import { getSocket } from '../lib/socket'; // Adjust path if your lib folder is elsewhere
+import { v4 as uuidv4 } from 'uuid';
 
 // YouTube URL Validation Regex (includes common patterns including /live/)
-const YOUTUBE_URL_REGEX = /^((?:https?:)?\/\/)?((?:www|m)\.)?((?:youtube(-nocookie)?\.com|youtu.be))(\/(?:[\w\-]+\?v=|embed\/|live\/|v\/)?)([\w\-]{11})(?:\S+)?$/;
+const YOUTUBE_URL_REGEX = /^(?:https?:\/\/)?(?:www\.)?(?:youtube\.com\/(?:watch\?v=|embed\/|live\/|v\/)|youtu\.be\/)([a-zA-Z0-9_-]{11})/;
 
 function isValidYouTubeUrl(url: string): boolean {
   if (!url) return false;
@@ -33,6 +35,7 @@ export default function SubmitPage() {
   const [currentStep, setCurrentStep] = useState(1)
   const router = useRouter()
   const { getToken } = useAuth();
+  const [currentClientRequestId, setCurrentClientRequestId] = useState<string | null>(null);
 
   const handleUrlChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const newUrl = e.target.value;
@@ -58,49 +61,70 @@ export default function SubmitPage() {
 
     setIsSubmitting(true);
 
-    try {
-      const clerkToken = await getToken();
-      if (!clerkToken) {
-        setSubmissionError("Authentication token not found. Please ensure you are logged in.");
-        setIsSubmitting(false);
-        return;
-      }
+    const socket = getSocket();
 
-      const response = await fetch("/api/streams", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${clerkToken}`,
-        },
-        body: JSON.stringify({ youtubeUrl: url }),
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({ error: "An unknown error occurred during stream creation." }));
-        console.error("API Error Response:", errorData);
-        setSubmissionError(errorData.error || `Failed to create stream: ${response.statusText}`);
-        setIsSubmitting(false);
-        return;
-      }
-
-      const result = await response.json();
-      const { streamId, livekitToken } = result;
-
-      if (!streamId || !livekitToken) {
-        setSubmissionError("Failed to retrieve stream details from the server.");
-        setIsSubmitting(false);
-        return;
-      }
-
-      console.log(`Redirecting to: /live?streamId=${streamId}&token=${livekitToken}&lang=${language}&format=${format}`);
-      router.push(`/live?streamId=${streamId}&token=${livekitToken}&lang=${language}&format=${format}`);
-
-    } catch (err: any) {
-      console.error("Error during submission:", err);
-      setSubmissionError(err.message || "An unexpected error occurred. Please try again.");
-      setIsSubmitting(false);
+    if (!socket.connected) {
+      socket.connect();
+      console.warn("[SubmitPage] Socket was not connected, attempting connect and emit.");
     }
+
+    const newClientRequestId = uuidv4();
+    setCurrentClientRequestId(newClientRequestId);
+
+    const payload = {
+      youtubeUrl: url,
+      targetLanguage: language,
+      clientRequestId: newClientRequestId,
+    };
+
+    console.log('[SubmitPage] Emitting "initiate_youtube_translation":', payload);
+    socket.emit('initiate_youtube_translation', payload);
   };
+
+  useEffect(() => {
+    if (!currentClientRequestId) {
+      return;
+    }
+
+    const socket = getSocket();
+    let PinnedClientRequestId = currentClientRequestId;
+
+    console.log(`[SubmitPage Effect] Setting up listeners for clientRequestId: ${PinnedClientRequestId}`);
+
+    const handleRequestProcessing = (data: { clientRequestId: string; streamId: string; message: string }) => {
+      console.log('[SubmitPage Effect] Received request_processing:', data);
+      if (data.clientRequestId === PinnedClientRequestId) {
+        console.log(`[SubmitPage Effect] Matched clientRequestId. Redirecting to /live?streamId=${data.streamId}`);
+        setIsSubmitting(false);
+        router.push(`/live?streamId=${data.streamId}&lang=${language}&format=${format}`);
+        setCurrentClientRequestId(null);
+      }
+    };
+
+    const handleRequestError = (data: { clientRequestId?: string; message: string; streamId?: string }) => {
+      console.log('[SubmitPage Effect] Received request_error/translation_error:', data);
+      // Check if this error is for the request we are currently tracking
+      // The check for data.streamId would require a map on the client if server only sends streamId with some errors.
+      // Assuming server includes clientRequestId in error payloads for simplicity here.
+      if (data.clientRequestId === PinnedClientRequestId) {
+        console.error(`[SubmitPage Effect] Error for clientRequestId ${PinnedClientRequestId}:`, data.message);
+        setSubmissionError(data.message || "An error occurred during submission.");
+        setIsSubmitting(false);
+        setCurrentClientRequestId(null);
+      }
+    };
+
+    socket.on('request_processing', handleRequestProcessing);
+    socket.on('request_error', handleRequestError);
+    socket.on('translation_error', handleRequestError);
+
+    return () => {
+      console.log(`[SubmitPage Effect] Cleaning up listeners for clientRequestId: ${PinnedClientRequestId}`);
+      socket.off('request_processing', handleRequestProcessing);
+      socket.off('request_error', handleRequestError);
+      socket.off('translation_error', handleRequestError);
+    };
+  }, [currentClientRequestId, router, language, format]);
 
   const nextStep = () => {
     setSubmissionError(""); // Clear general submission error on step change attempt
