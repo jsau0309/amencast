@@ -37,8 +37,8 @@ interface StreamDetails {
 interface TranslationResultData {
   streamId: string;
   status: 'success' | 'error';
-  sourceText?: string;
-  translatedText?: string;
+  // sourceText?: string; // No longer storing in state for display
+  // translatedText?: string; // No longer storing in state for display
   finalAudioUrl?: string;
   errorMessage?: string;
 }
@@ -65,8 +65,6 @@ export default function LivestreamPage() {
   const [initialDataLoading, setInitialDataLoading] = useState(true);
   const [initialDataError, setInitialDataError] = useState<string | null>(null);
 
-  const [sourceText, setSourceText] = useState('');
-  const [translatedText, setTranslatedText] = useState('');
   const [finalAudioUrl, setFinalAudioUrl] = useState('');
   const [isTranslationLoading, setIsTranslationLoading] = useState(true);
   const [translationError, setTranslationError] = useState<string | null>(null);
@@ -148,8 +146,6 @@ export default function LivestreamPage() {
     setIsTranslationLoading(true);
     setTranslationError(null);
     // Reset previous translation data when a new streamId is processed or page loads
-    setSourceText('');
-    setTranslatedText('');
     setFinalAudioUrl('');
     setIsPlayingTranslatedAudio(false);
 
@@ -158,8 +154,8 @@ export default function LivestreamPage() {
       if (data.streamId === streamIdFromUrl) {
         console.log('[LivePage] Received translation_result:', data);
         if (data.status === 'success') {
-          setSourceText(data.sourceText || 'N/A');
-          setTranslatedText(data.translatedText || 'N/A');
+          // setSourceText(data.sourceText || 'N/A'); // REMOVED
+          // setTranslatedText(data.translatedText || 'N/A'); // REMOVED
           setFinalAudioUrl(data.finalAudioUrl || '');
           setTranslationError(null);
           // Auto-play translated audio when it arrives if a URL is present.
@@ -359,18 +355,8 @@ export default function LivestreamPage() {
            </p>
         </div>
       )}
-      {sourceText && !translationError && (
-        <div className="mt-4">
-          <h3 className="font-semibold text-lg">Original Text (Detected):</h3>
-          <Textarea value={sourceText} readOnly rows={3} className="mt-1 w-full bg-muted/20 text-sm" />
-        </div>
-      )}
-      {translatedText && !translationError && (
-        <div className="mt-4">
-          <h3 className="font-semibold text-lg">Translated Text ({lang.toUpperCase()}):</h3>
-          <Textarea value={translatedText} readOnly rows={3} className="mt-1 w-full bg-muted/20 text-sm" />
-        </div>
-      )}
+      {/* REMOVED sourceText display block */}
+      {/* REMOVED translatedText display block */}
     </div>
   );
 

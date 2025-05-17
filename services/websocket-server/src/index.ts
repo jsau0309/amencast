@@ -147,44 +147,65 @@ async function listenForResults() {
 io.on('connection', (socket: Socket) => {
   console.log(`[WebSocketServer] Client connected: ${socket.id}`);
 
-  socket.on('initiate_youtube_translation', async (data: { youtubeUrl: string; targetLanguage: string; clientRequestId: string }) => {
+  socket.on('initiate_youtube_translation', async (data: { 
+    youtubeUrl: string; 
+    targetLanguage: string; 
+    clientRequestId: string; 
+    streamId: string;
+    format?: string;
+  }) => {
     console.log(`[WebSocketServer] Received 'initiate_youtube_translation' from ${socket.id}:`, data);
 
-    if (!data || !data.youtubeUrl || !data.targetLanguage || !data.clientRequestId) {
+    if (!data || !data.youtubeUrl || !data.targetLanguage || !data.clientRequestId || !data.streamId) {
       console.error('[WebSocketServer] Invalid data received for initiate_youtube_translation:', data);
-      socket.emit('request_error', { clientRequestId: data?.clientRequestId, message: 'Invalid request data. Ensure youtubeUrl, targetLanguage, and clientRequestId are provided.' });
+      socket.emit('request_error', { 
+        clientRequestId: data?.clientRequestId, 
+        streamId: data?.streamId,
+        message: 'Invalid request data. Ensure youtubeUrl, targetLanguage, clientRequestId, and streamId are provided.' 
+      });
       return;
     }
+
+    const streamIdFromClient = data.streamId;
+
+    clientRequestToSocketIdMap.set(data.clientRequestId, socket.id);
+    streamIdToClientRequestMap.set(streamIdFromClient, data.clientRequestId);
 
     const youtubeVideoId = extractYouTubeVideoId(data.youtubeUrl);
     if (!youtubeVideoId) {
       console.error('[WebSocketServer] Could not extract YouTube Video ID from URL:', data.youtubeUrl);
-      socket.emit('request_error', { clientRequestId: data.clientRequestId, message: 'Invalid YouTube URL or could not extract Video ID.' });
+      socket.emit('request_error', { 
+        clientRequestId: data.clientRequestId, 
+        streamId: streamIdFromClient,
+        message: 'Invalid YouTube URL or could not extract Video ID.' 
+      });
+      clientRequestToSocketIdMap.delete(data.clientRequestId);
+      streamIdToClientRequestMap.delete(streamIdFromClient);
       return;
     }
 
-    const streamId = uuidv4();
-    clientRequestToSocketIdMap.set(data.clientRequestId, socket.id);
-    streamIdToClientRequestMap.set(streamId, data.clientRequestId);
-
     const ingestionJob = {
-      streamId: streamId,
+      streamId: streamIdFromClient,
       youtubeVideoId: youtubeVideoId,
     };
 
     try {
       await publisherRedis.lpush(config.redis.ingestionQueueName, JSON.stringify(ingestionJob));
-      console.log(`[WebSocketServer] Queued ingestion job for streamId ${streamId} (clientRequestId ${data.clientRequestId}) to ${config.redis.ingestionQueueName}`);
+      console.log(`[WebSocketServer] Queued ingestion job for DB streamId ${streamIdFromClient} (clientRequestId ${data.clientRequestId}) to ${config.redis.ingestionQueueName}`);
       socket.emit('request_processing', {
         clientRequestId: data.clientRequestId,
-        streamId: streamId,
+        streamId: streamIdFromClient,
         message: 'Request received and queued for ingestion.'
       });
     } catch (error) {
       console.error('[WebSocketServer] Error queuing ingestion job to Redis:', error);
-      socket.emit('request_error', { clientRequestId: data.clientRequestId, message: 'Server error: Could not queue request for processing.' });
+      socket.emit('request_error', { 
+        clientRequestId: data.clientRequestId, 
+        streamId: streamIdFromClient,
+        message: 'Server error: Could not queue request for processing.' 
+      });
       clientRequestToSocketIdMap.delete(data.clientRequestId);
-      streamIdToClientRequestMap.delete(streamId);
+      streamIdToClientRequestMap.delete(streamIdFromClient);
     }
   });
 

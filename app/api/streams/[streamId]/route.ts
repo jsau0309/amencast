@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getAuth } from '@clerk/nextjs/server'; // clerkClient might not be needed for just GET
-import { PrismaClient } from '@prisma/client';
+import prisma from '@/lib/prisma'; // Adjust path
 
-const prisma = new PrismaClient();
+
 
 export const dynamic = 'force-dynamic'; // Added to ensure dynamic behavior
 
