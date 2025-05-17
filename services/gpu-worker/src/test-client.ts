@@ -2,6 +2,13 @@ import { Room, RoomEvent } from '@livekit/rtc-node';
 import { AccessToken } from 'livekit-server-sdk';
 import { config } from './worker.config';
 
+/**
+ * Connects to a LiveKit room as a test client, sends a translation request, and handles room events.
+ *
+ * This function generates an access token, connects to a predefined room, publishes a test translation request as data, listens for incoming data and connection events, and gracefully handles shutdown and errors.
+ *
+ * @remark The function waits 30 seconds after sending the test request before disconnecting, allowing time to receive responses.
+ */
 async function main() {
   try {
     const roomName = 'amencast-translation-room';

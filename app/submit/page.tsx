@@ -19,11 +19,25 @@ import { v4 as uuidv4 } from 'uuid';
 // YouTube URL Validation Regex (includes common patterns including /live/)
 const YOUTUBE_URL_REGEX = /^(?:https?:\/\/)?(?:www\.)?(?:youtube\.com\/(?:watch\?v=|embed\/|live\/|v\/)|youtu\.be\/)([a-zA-Z0-9_-]{11})/;
 
+/**
+ * Checks if a string matches common YouTube URL formats.
+ *
+ * @param url - The URL string to validate.
+ * @returns True if the input is a valid YouTube URL; otherwise, false.
+ */
 function isValidYouTubeUrl(url: string): boolean {
   if (!url) return false;
   return YOUTUBE_URL_REGEX.test(url);
 }
 
+/**
+ * Renders a multi-step form for submitting a YouTube livestream URL to initiate a real-time translation process.
+ *
+ * Users enter a YouTube livestream link, select a target language, and choose a translation format. Upon submission, the component validates the input, creates a stream record via API, and coordinates with the backend using WebSocket events to track processing status. The user is redirected to the live translation page once processing begins, or shown errors if issues occur.
+ *
+ * @remark
+ * The submission process uses a client-generated request ID to correlate WebSocket events with the current form submission, ensuring accurate feedback and navigation.
+ */
 export default function SubmitPage() {
   const [url, setUrl] = useState("")
   const [urlError, setUrlError] = useState("") // Specific error for URL format

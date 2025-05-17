@@ -3,7 +3,13 @@ import { config } from '../worker.config';
 
 let openai: OpenAI | null = null;
 
-// Export this function so it can be used by other modules (e.g., index.ts for Whisper API fallback)
+/**
+ * Returns a singleton instance of the OpenAI client configured with the API key.
+ *
+ * @returns The initialized OpenAI client instance.
+ *
+ * @throws {Error} If the OpenAI API key is not configured in the application settings.
+ */
 export function getOpenAIClient(): OpenAI {
   if (!openai) {
     if (!config.openai.apiKey) {
@@ -17,9 +23,12 @@ export function getOpenAIClient(): OpenAI {
 }
 
 /**
- * Translates a given text segment from English to Spanish using GPT-4o.
- * @param text The English text to translate.
- * @returns The translated Spanish text, or null if translation fails.
+ * Translates English text into Spanish using the OpenAI GPT-4o model.
+ *
+ * Returns the original text if it is empty or whitespace. If translation is successful, returns the translated Spanish text; otherwise, returns null.
+ *
+ * @param text - The English text to translate.
+ * @returns The translated Spanish text, or null if translation fails or the API response is empty.
  */
 export async function translateTextGoogle(text: string): Promise<string | null> {
   if (!text || text.trim() === '') {

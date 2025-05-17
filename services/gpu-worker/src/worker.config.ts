@@ -4,6 +4,18 @@ import path from 'path';
 // Load .env from project root
 dotenv.config({ path: path.join(__dirname, '../../.env') });
 
+/**
+ * Retrieves the value of an environment variable, enforcing presence and sensitivity requirements.
+ *
+ * If the variable is not set, returns {@link defaultValue} if provided. Throws an error if the variable is required and missing, with a specific message for sensitive variables.
+ *
+ * @param name - The name of the environment variable to retrieve.
+ * @param isSensitive - Whether the variable is sensitive; missing sensitive variables trigger a distinct error.
+ * @param defaultValue - Optional fallback value if the variable is not set.
+ * @returns The value of the environment variable or {@link defaultValue} if provided.
+ *
+ * @throws {Error} If the required environment variable is missing, or if a sensitive variable is not set.
+ */
 function requireEnv(name: string, isSensitive: boolean = false, defaultValue?: string): string {
   const value = process.env[name];
   if (!value) {

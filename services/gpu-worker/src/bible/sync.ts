@@ -22,6 +22,14 @@ const prisma = new PrismaClient({
 // Define path relative to the gpu-worker directory, assuming script is run from project root
 const LOCAL_DB_PATH = path.resolve(process.cwd(), 'gpu-worker/bible/bible.sqlite');
 
+/**
+ * Synchronizes Bible verse data from a Supabase PostgreSQL database to a local SQLite database.
+ *
+ * Fetches all Bible verses from Supabase using Prisma ORM and upserts them into the local `bible_verses` table in `bible.sqlite`. Ensures the local table exists and maintains data consistency by replacing existing records with matching primary or unique keys.
+ *
+ * @remark
+ * Exits the process if `DATABASE_URL` is not set in the environment. Logs progress and errors throughout the operation.
+ */
 async function syncBibleToLocalSqlite() {
   console.log('Starting sync from Supabase to local SQLite (bible.sqlite)...');
 

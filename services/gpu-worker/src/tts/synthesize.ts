@@ -4,9 +4,14 @@ import { config } from '../worker.config';
 const ELEVENLABS_API_BASE_URL = 'https://api.elevenlabs.io/v1';
 
 /**
- * Synthesizes audio from Spanish text using the ElevenLabs API.
- * @param text The Spanish text to synthesize.
- * @returns A Buffer containing the audio data (e.g., MP3), or null if synthesis fails.
+ * Converts Spanish text to speech using the ElevenLabs API.
+ *
+ * @param text - The Spanish text to synthesize.
+ * @returns A Buffer containing the synthesized audio data, or null if synthesis fails.
+ *
+ * @throws {Error} If the ElevenLabs API key or voice ID is not configured.
+ *
+ * @remark Returns null if the input text is empty or if the API request fails.
  */
 export async function synthesizeAudioElevenLabs(text: string): Promise<Buffer | null> {
   if (!text || text.trim() === '') {

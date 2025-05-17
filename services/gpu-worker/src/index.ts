@@ -49,6 +49,13 @@ let supabase: SupabaseClient | null = null; // Declare Supabase client variable
 
 let isShuttingDown = false;
 
+/**
+ * Initializes Redis, OpenAI, ElevenLabs, and Supabase clients for the GPU worker service.
+ *
+ * Sets up event listeners for Redis client connections and errors, configures third-party service clients if credentials are provided, and establishes Redis connections.
+ *
+ * @throws {Error} If connecting to either Redis client fails.
+ */
 async function initializeClients() {
   console.log('[GPWorker] Initializing Redis clients...');
   inputRedisClient.on('connect', () => console.log('[GPWorker] Input Redis connected.'));
@@ -92,6 +99,16 @@ async function initializeClients() {
   console.log('[GPWorker] All Redis clients initialized successfully.');
 }
 
+/**
+ * Processes a GPU translation job by transcribing, translating, and synthesizing audio, then uploads the result and publishes the outcome.
+ *
+ * Downloads the source audio file, performs speech-to-text transcription using OpenAI Whisper, translates the transcription to the target language with OpenAI GPT, and synthesizes the translated text into speech using ElevenLabs TTS. The synthesized audio is uploaded to Supabase Storage, and a signed URL is generated for access. The function then publishes the processing result, including any errors, to the output Redis queue.
+ *
+ * @param job - The GPU job containing stream ID, source audio URL, and target language for translation.
+ *
+ * @remark
+ * Throws an error if required clients (OpenAI, ElevenLabs, Supabase) are not initialized, or if any step in the processing pipeline fails. Cleans up temporary files and directories after processing.
+ */
 async function processGpuJob(job: GpuJob): Promise<void> {
   console.log(`[GPWorker] Processing GpuJob for streamId: ${job.streamId}, audioUrl: ${job.audioPublicUrl}`);
   let processingResult: TranslationResult = {
@@ -261,6 +278,11 @@ async function processGpuJob(job: GpuJob): Promise<void> {
   }
 }
 
+/**
+ * Continuously polls the input Redis queue for audio translation jobs and processes each job sequentially.
+ *
+ * @remark Exits the polling loop gracefully when a shutdown is signaled.
+ */
 async function startPolling(): Promise<void> {
   console.log(`[GPWorker] Input Redis client ready. Starting BRPOP loop on queue: ${config.redis.inputQueueName}.`);
   while (!isShuttingDown) {
@@ -297,6 +319,13 @@ async function startPolling(): Promise<void> {
   console.log('[GPWorker] Polling loop stopped.');
 }
 
+/**
+ * Handles graceful shutdown of the GPU worker service upon receiving a termination signal.
+ *
+ * Initiates disconnection of Redis clients, logs shutdown progress, and forces process exit if shutdown does not complete within 10 seconds.
+ *
+ * @remark If Redis clients are not disconnected within the timeout, the process exits with a nonzero status.
+ */
 function signalShutdownHandler() {
   if (isShuttingDown) return;
   console.log('[GPWorker] Shutdown signal received. Preparing to stop polling...');
@@ -326,6 +355,11 @@ function signalShutdownHandler() {
   }, 10000);
 }
 
+/**
+ * Initializes all required clients and starts the GPU worker polling loop.
+ *
+ * Handles critical errors during startup or polling by triggering a graceful shutdown or forcing process exit if already shutting down.
+ */
 async function main() {
   try {
     await initializeClients();

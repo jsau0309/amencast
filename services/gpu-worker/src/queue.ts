@@ -34,6 +34,13 @@ const redisOptions: RedisOptions = {
   lazyConnect: true, // Connect only when a command is issued or .connect() is called
 };
 
+/**
+ * Returns a singleton main Redis client, initializing or reinitializing the connection if necessary.
+ *
+ * @returns The main Redis client instance, ready for use.
+ *
+ * @remark If the client is not ready or does not exist, a new connection is established with event listeners for connection lifecycle events. Errors during connection are logged but not thrown.
+ */
 export async function getRedisClient(): Promise<Redis> {
   if (!redisClient || redisClient.status !== 'ready') {
     console.log('[RedisQueue] Initializing or re-initializing main Redis client...');
@@ -58,6 +65,15 @@ export async function getRedisClient(): Promise<Redis> {
   return redisClient;
 }
 
+/**
+ * Returns a dedicated Redis client for blocking polling operations.
+ *
+ * Initializes or reinitializes the polling client if it does not exist or is not ready, attaching event listeners for connection lifecycle events. Throws an error if the client fails to connect.
+ *
+ * @returns The ready Redis client for polling.
+ *
+ * @throws {Error} If the polling Redis client fails to connect.
+ */
 async function getPollingRedisClient(): Promise<Redis> {
   if (!pollingConnection || pollingConnection.status !== 'ready') {
     console.log('[RedisQueue] Initializing or re-initializing polling Redis client...');
@@ -83,6 +99,13 @@ async function getPollingRedisClient(): Promise<Redis> {
 }
 
 
+/**
+ * Continuously polls the Redis queue for GPU jobs and processes each job using the provided callback.
+ *
+ * @param processJobCallback - Asynchronous function to handle each valid {@link GpuJob} dequeued from Redis.
+ *
+ * @remark The polling loop runs until a shutdown signal is received. If a job is malformed or missing required fields, it is logged and not processed. Errors during polling or processing are logged, and the loop waits before retrying. The function exits cleanly on shutdown.
+ */
 export async function startPolling(processJobCallback: (job: GpuJob) => Promise<void>) {
   console.log(`[RedisQueue] Attempting to start polling on queue: ${config.redis.queueName}...`);
   
@@ -139,6 +162,11 @@ export async function startPolling(processJobCallback: (job: GpuJob) => Promise<
   console.log('[RedisQueue] Polling stopped.');
 }
 
+/**
+ * Signals shutdown and disconnects both the polling and main Redis clients.
+ *
+ * Ensures that any ongoing blocking operations, such as BRPOP, are interrupted by disconnecting the polling client first. Clears client references after disconnecting.
+ */
 export async function signalShutdownAndDisconnect() {
   console.log('[RedisQueue] Shutdown signal received. Preparing to stop polling and disconnect clients...');
   isShuttingDown = true;
