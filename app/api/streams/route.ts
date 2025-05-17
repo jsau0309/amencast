@@ -1,17 +1,24 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getAuth } from '@clerk/nextjs/server';
 import { z } from 'zod';
-import { prisma } from '@/lib/utils'; // Adjusted path based on our previous prisma instance location
-import { AccessToken } from 'livekit-server-sdk';
+import prisma from '@/lib/prisma'; // Adjust path if you placed prisma.ts elsewhere (e.g., ../../lib/prisma)
 
-// Input schema for validation
 const CreateStreamSchema = z.object({
   youtubeUrl: z.string().url({ message: "Invalid YouTube URL" }),
+  languageTarget: z.string().optional(),
+  format: z.string().optional(), 
 });
 
+/**
+ * Handles creation of a new stream for an authenticated user.
+ *
+ * Validates the request body for a YouTube URL and optional language and format fields, extracts the YouTube video ID, and creates a new stream record in the database with status set to "pending_ingestion". Returns the created stream's ID, YouTube video ID, status, language target, and format.
+ *
+ * @returns A JSON response with stream details and HTTP status 201 on success, or an error message with appropriate status code on failure.
+ */
 export async function POST(req: NextRequest) {
   try {
-    const { userId: clerkUserId } = getAuth(req);
+    const { userId: clerkUserId } = getAuth(req as any); 
     if (!clerkUserId) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
@@ -26,69 +33,61 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const { youtubeUrl } = validationResult.data;
+    const { youtubeUrl, languageTarget, format } = validationResult.data;
 
-    // Database Interaction (Prisma)
+    const YOUTUBE_ID_REGEX = /(?:youtube\.com\/(?:[^\/\n\s]+\/\S+\/|(?:v|e(?:mbed)?)\/|\S*?[?&]v=)|youtu\.be\/)([a-zA-Z0-9_-]{11})/; // Ensure this regex is robust
+    const match = youtubeUrl.match(YOUTUBE_ID_REGEX);
+    const youtubeVideoId = match ? match[1] : null;
+
+    if (!youtubeVideoId) {
+      return NextResponse.json({ error: "Could not extract YouTube Video ID from URL." }, { status: 400 });
+    }
+
+    console.log(`[API POST /api/streams] Creating stream for user: ${clerkUserId}, YT ID: ${youtubeVideoId}`);
     const newStream = await prisma.stream.create({
       data: {
-        youtube_video_id: youtubeUrl,
-        status: "pending", // Initial status
+        youtube_video_id: youtubeVideoId, 
+        status: "pending_ingestion", 
         listener_id: clerkUserId,
+        language_target: languageTarget || 'es',
+        // format: format || 'video-audio', // Uncomment if you add 'format' to your Stream model in Prisma
         started_at: new Date(),
       },
     });
+    console.log('[API POST /api/streams] Stream created in DB:', newStream);
 
-    // LiveKit Token Generation
-    const livekitHost = process.env.LIVEKIT_HOST;
-    const livekitApiKey = process.env.LIVEKIT_API_KEY;
-    const livekitApiSecret = process.env.LIVEKIT_API_SECRET;
-
-    if (!livekitHost || !livekitApiKey || !livekitApiSecret) {
-      console.error('LiveKit environment variables are not set.');
-      // Do not send sensitive error details to client in production
-      return NextResponse.json({ error: "Stream created, but media token generation failed. Configuration error." }, { status: 500 }); 
-    }
-
-    const roomName = newStream.id; // Use stream ID as room name
-    const participantName = clerkUserId; // Use clerkUserId as participant name/identity
-
-    const at = new AccessToken(livekitApiKey, livekitApiSecret, {
-      identity: participantName,
-      // ttl: '1h' // Optional: token time-to-live
-    });
-    at.addGrant({ 
-      room: roomName, 
-      roomJoin: true, 
-      canSubscribe: true, 
-      canPublish: false, // Listeners typically don't publish
-      canPublishData: false, // Listeners typically don't publish data
-    });
-
-    const livekitToken = await at.toJwt();
+    // LiveKit Token Generation logic is now completely removed.
 
     return NextResponse.json(
-      { streamId: newStream.id, livekitToken: livekitToken },
-      { status: 201 } // 201 Created
+      {
+        streamId: newStream.id,
+        youtubeVideoId: newStream.youtube_video_id, // Return the extracted ID
+        status: newStream.status,
+        languageTarget: newStream.language_target,
+        format: format || 'video-audio' // Return format, or what was used/defaulted
+      },
+      { status: 201 }
     );
 
   } catch (error) {
-    console.error("Error creating stream:", error);
-    // Generic error for the client
+    console.error("Error creating stream in /api/streams POST:", error);
     return NextResponse.json({ error: "Failed to create stream" }, { status: 500 });
   }
 }
 
 /**
- * Handles GET requests to the /api/streams endpoint.
- * Returns a list of streams for the authenticated user.
+ * Retrieves all streams associated with the authenticated user.
+ *
+ * @returns A JSON response containing the user's streams, ordered by most recent, or an error message with the appropriate HTTP status code.
  */
 export async function GET(req: NextRequest) {
   try {
-    const { userId: clerkUserId } = getAuth(req);
+    const { userId: clerkUserId } = getAuth(req as any); 
     if (!clerkUserId) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
+    console.log(`[API GET /api/streams] Fetching streams for user: ${clerkUserId}`);
     const streams = await prisma.stream.findMany({
       where: {
         listener_id: clerkUserId,
@@ -96,14 +95,12 @@ export async function GET(req: NextRequest) {
       orderBy: {
         started_at: 'desc',
       },
-      // Optionally, select specific fields if not all are needed
-      // select: { id: true, youtube_video_id: true, status: true, started_at: true }
     });
 
     return NextResponse.json(streams, { status: 200 });
 
   } catch (error) {
-    console.error("Error fetching streams:", error);
+    console.error("Error fetching streams from /api/streams GET:", error);
     return NextResponse.json({ error: "Failed to fetch streams" }, { status: 500 });
   }
 } 

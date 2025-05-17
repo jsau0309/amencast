@@ -1,0 +1,23 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "target": "ES2022",                          /* Specify ECMAScript target version */
+    "module": "CommonJS",                        /* Specify module code generation */
+    "outDir": "./dist",                          /* Redirect output structure to the directory */
+    "strict": true,                             /* Enable all strict type-checking options */
+    "esModuleInterop": true,                    /* Enables emit interoperability between CommonJS and ES Modules */
+    "skipLibCheck": true,                       /* Skip type checking of declaration files */
+    "forceConsistentCasingInFileNames": true,   /* Disallow inconsistently-cased references to the same file */
+    "resolveJsonModule": true,                  /* Include modules imported with .json extension */
+    "moduleResolution": "node",                  /* Specify module resolution strategy: 'node' for Node.js */
+    "noEmit": false
+  },
+  "include": [
+    "src/**/*"                                  /* Include all files in the src directory */
+  ],
+  "exclude": [
+    "node_modules",                             /* Exclude node_modules directory */
+    "dist",
+    "**/*.spec.ts"                              /* Exclude test files */
+  ]
+} 

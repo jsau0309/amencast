@@ -2,7 +2,7 @@
 
 generator client {
   provider = "prisma-client-js"
-  // output   = "node_modules/.prisma/client" // Commented out to use default location (root node_modules)
+  output   = "../node_modules/.prisma/client" // Path relative to this schema file
 }
 
 datasource db {
@@ -22,7 +22,6 @@ model Stream {
   youtube_video_id String
   status           String // e.g., "pending", "processing", "live", "ended", "error"
   listener_id      String // Clerk User ID. SRS: "listener_id uuid FK → users"
-  language_target  String?   // Added: e.g., "es", "en", etc.
   started_at       DateTime?
   ended_at         DateTime?
 

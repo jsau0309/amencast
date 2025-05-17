@@ -1,0 +1,30 @@
+{
+    "extends": "./tsconfig.json", // Inherit from your main tsconfig
+    "compilerOptions": {
+      "module": "CommonJS",     // Override to CommonJS for scripts
+      "moduleResolution": "Node", // Changed from bundler to Node for CommonJS
+      "outDir": "./dist-scripts", // Output compiled scripts to a separate folder
+      "noEmit": false,          // We DO want to emit JS for scripts
+      "isolatedModules": false, // Often needed when not using a bundler
+      "plugins": [],            // Clear Next.js specific plugins
+      // Ensure other necessary options for Node.js scripts are present
+      "target": "ES2020",       // Or a suitable Node.js compatible target
+      "skipLibCheck": true,
+      "esModuleInterop": true,
+      "allowSyntheticDefaultImports": true // Often helpful for CJS interop
+    },
+    "include": [
+      "./scripts/**/*.ts",
+      "./gpu-worker/bible/**/*.ts" // Added path for gpu-worker bible scripts
+    ],
+    "exclude": [
+      "node_modules",
+      ".next",
+      "app", // Exclude main app code
+      "components",
+      "lib",
+      "libs",
+      "gpu-worker", // Exclude other parts of your app
+      "dist"        // Also exclude the main app's dist if it exists
+    ]
+  }

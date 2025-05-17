@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getAuth } from '@clerk/nextjs/server';
-import { prisma } from '@/lib/utils'; // Ensure this path is correct
+import { getAuth } from '@clerk/nextjs/server'; // clerkClient might not be needed for just GET
+import prisma from '@/lib/prisma'; // Adjust path
+
+
+
+export const dynamic = 'force-dynamic'; // Added to ensure dynamic behavior
 
 interface RouteParams {
   params: {
@@ -9,43 +13,63 @@ interface RouteParams {
 }
 
 /**
- * Handles GET requests to the /api/streams/[streamId] endpoint.
- * Returns details for a specific stream if it belongs to the authenticated user.
+ * Handles GET requests to retrieve details of a specific stream by its ID for the authenticated user.
+ *
+ * @param context - Contains the route parameters, including the {@link streamId} identifying the stream to fetch.
+ * @returns A JSON response with the stream details if found and accessible, or an error message with the appropriate HTTP status code.
+ *
+ * @remark Returns a 401 response if the user is not authenticated, a 400 response if {@link streamId} is missing, a 404 response if the stream does not exist or access is denied, and a 500 response for unexpected server errors.
  */
-export async function GET(req: NextRequest, { params }: RouteParams) {
+export async function GET(
+  request: NextRequest, 
+  context: { params: { streamId: string } }
+) {
+  // console.log('[API /api/streams/] RAW context object:', JSON.stringify(context, null, 2));
+  // console.log('[API /api/streams/] context.params object:', JSON.stringify(context.params, null, 2));
+  // if (context && context.params && typeof context.params.streamId === 'string') {
+  //   console.log('[API /api/streams/] Directly accessed streamId for logging:', context.params.streamId);
+  // } else {
+  //   console.log('[API /api/streams/] context.params.streamId is not immediately a string or params/context is missing.');
+  // }
+
+  const { userId } = getAuth(request as any); 
+  
+  // const dynamicStreamId = context.params.streamId; // Removed intermediate variable
+
+  if (!userId) {
+    return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
+  }
+
+  // Use context.params.streamId directly
+  if (!context.params.streamId) { 
+    return NextResponse.json({ error: "Stream ID is required from path" }, { status: 400 });
+  }
+
   try {
-    const { userId: clerkUserId } = getAuth(req);
-    if (!clerkUserId) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-
-    const { streamId } = params;
-
-    // Basic validation: Check if streamId is provided (though Next.js routing usually ensures this)
-    if (!streamId) {
-      return NextResponse.json({ error: "Stream ID is required" }, { status: 400 });
-    }
-
-    // Optional: Validate streamId format (e.g., is UUID) if desired, e.g. using Zod
-    // For now, we rely on Prisma to handle non-UUIDs gracefully in its query.
-
-    const stream = await prisma.stream.findFirst({
+    console.log(`[API /api/streams/${context.params.streamId}] User ${userId} attempting to fetch stream details.`);
+    const stream = await prisma.stream.findUnique({
       where: {
-        id: streamId,
-        listener_id: clerkUserId, // Ensures the stream belongs to the authenticated user
+        id: context.params.streamId, 
       },
-      // You can include related data if needed in the future, e.g.:
-      // include: { feedback: true, transcripts: true }
     });
 
     if (!stream) {
+      console.log(`[API /api/streams/${context.params.streamId}] Stream not found for user ${userId} or general not found.`);
       return NextResponse.json({ error: "Stream not found or access denied" }, { status: 404 });
     }
+    
+    // Example: Explicitly check if the user is the owner/listener if that's a requirement
+    // This depends on your data model and authorization rules.
+    // if (stream.listener_id !== userId) { 
+    //   console.warn(`[API /api/streams/${context.params.streamId}] Unauthorized access attempt by user ${userId}.`);
+    //   return NextResponse.json({ error: "Access denied" }, { status: 403 });
+    // }
 
-    return NextResponse.json(stream, { status: 200 });
+    console.log(`[API /api/streams/${context.params.streamId}] Stream details successfully found for user ${userId}:`, stream);
+    return NextResponse.json(stream);
 
   } catch (error) {
-    console.error(`Error fetching stream ${params?.streamId}:`, error);
-    return NextResponse.json({ error: "Failed to fetch stream" }, { status: 500 });
+    console.error(`[API /api/streams/${context.params.streamId}] Error fetching stream for user ${userId}:`, error);
+    return NextResponse.json({ error: "Internal server error while fetching stream details." }, { status: 500 });
   }
 } 

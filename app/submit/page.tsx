@@ -1,7 +1,6 @@
 "use client"
 
 import type React from "react"
-
 import { useState, useEffect } from "react"
 import { useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
@@ -14,15 +13,31 @@ import { Loader2, Youtube, Volume2, Video } from "lucide-react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
 import { SignedIn, SignedOut, UserButton, SignInButton, useAuth } from "@clerk/nextjs"
+import { getSocket } from '../lib/socket'; // Adjust path if your lib folder is elsewhere
+import { v4 as uuidv4 } from 'uuid';
 
 // YouTube URL Validation Regex (includes common patterns including /live/)
-const YOUTUBE_URL_REGEX = /^((?:https?:)?\/\/)?((?:www|m)\.)?((?:youtube(-nocookie)?\.com|youtu.be))(\/(?:[\w\-]+\?v=|embed\/|live\/|v\/)?)([\w\-]{11})(?:\S+)?$/;
+const YOUTUBE_URL_REGEX = /^(?:https?:\/\/)?(?:www\.)?(?:youtube\.com\/(?:watch\?v=|embed\/|live\/|v\/)|youtu\.be\/)([a-zA-Z0-9_-]{11})/;
 
+/**
+ * Checks if a string matches common YouTube URL formats.
+ *
+ * @param url - The URL string to validate.
+ * @returns True if the input is a valid YouTube URL; otherwise, false.
+ */
 function isValidYouTubeUrl(url: string): boolean {
   if (!url) return false;
   return YOUTUBE_URL_REGEX.test(url);
 }
 
+/**
+ * Renders a multi-step form for submitting a YouTube livestream URL to initiate a real-time translation process.
+ *
+ * Users enter a YouTube livestream link, select a target language, and choose a translation format. Upon submission, the component validates the input, creates a stream record via API, and coordinates with the backend using WebSocket events to track processing status. The user is redirected to the live translation page once processing begins, or shown errors if issues occur.
+ *
+ * @remark
+ * The submission process uses a client-generated request ID to correlate WebSocket events with the current form submission, ensuring accurate feedback and navigation.
+ */
 export default function SubmitPage() {
   const [url, setUrl] = useState("")
   const [urlError, setUrlError] = useState("") // Specific error for URL format
@@ -33,6 +48,7 @@ export default function SubmitPage() {
   const [currentStep, setCurrentStep] = useState(1)
   const router = useRouter()
   const { getToken } = useAuth();
+  const [currentClientRequestId, setCurrentClientRequestId] = useState<string | null>(null);
 
   const handleUrlChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const newUrl = e.target.value;
@@ -44,63 +60,136 @@ export default function SubmitPage() {
     }
     setSubmissionError(""); // Clear general submission error when URL changes
   };
-
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setSubmissionError(""); // Clear previous submission errors
+    setSubmissionError(""); 
+    setUrlError(""); // Clear URL error on new submission attempt
 
     if (!isValidYouTubeUrl(url)) {
       setUrlError("Please enter a valid YouTube URL format.");
-      setSubmissionError("Cannot proceed: invalid YouTube URL."); // Also set general error for clarity
+      setSubmissionError("Cannot proceed: invalid YouTube URL.");
       return;
     }
-    setUrlError(""); // Clear URL specific error if it was valid on submit
 
     setIsSubmitting(true);
+    const newClientRequestId = uuidv4(); // Generate clientRequestId upfront
+    setCurrentClientRequestId(newClientRequestId); // Set this to enable useEffect listeners immediately
 
     try {
-      const clerkToken = await getToken();
+      // Step 1: Create the stream record via API and get the streamId
+      const clerkToken = await getToken(); // getToken is from useAuth()
       if (!clerkToken) {
         setSubmissionError("Authentication token not found. Please ensure you are logged in.");
         setIsSubmitting(false);
+        setCurrentClientRequestId(null); // Clear if auth fails
         return;
       }
 
-      const response = await fetch("/api/streams", {
+      console.log('[SubmitPage] Creating stream record via API...');
+      const apiResponse = await fetch("/api/streams", { // POST to your existing /api/streams
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${clerkToken}`,
         },
-        body: JSON.stringify({ youtubeUrl: url }),
+        body: JSON.stringify({ 
+            youtubeUrl: url, 
+            languageTarget: language, 
+            format: format 
+        }),
       });
 
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({ error: "An unknown error occurred during stream creation." }));
-        console.error("API Error Response:", errorData);
-        setSubmissionError(errorData.error || `Failed to create stream: ${response.statusText}`);
+      if (!apiResponse.ok) {
+        const errorData = await apiResponse.json().catch(() => ({ error: "An unknown error occurred creating the stream record." }));
+        console.error("[SubmitPage] API Error Creating Stream:", errorData);
+        setSubmissionError(errorData.error || `Failed to create stream: ${apiResponse.statusText}`);
         setIsSubmitting(false);
+        setCurrentClientRequestId(null); // Clear on API error
         return;
       }
 
-      const result = await response.json();
-      const { streamId, livekitToken } = result;
+      const result = await apiResponse.json();
+      const streamIdFromApi = result.streamId; // Assuming your API returns { streamId: ... }
 
-      if (!streamId || !livekitToken) {
-        setSubmissionError("Failed to retrieve stream details from the server.");
+      if (!streamIdFromApi) {
+        setSubmissionError("Failed to retrieve a valid stream ID from the server after creation.");
         setIsSubmitting(false);
+        setCurrentClientRequestId(null); // Clear if no streamId
         return;
       }
+      console.log(`[SubmitPage] Stream record created with ID: ${streamIdFromApi}`);
 
-      console.log(`Redirecting to: /live?streamId=${streamId}&token=${livekitToken}&lang=${language}&format=${format}`);
-      router.push(`/live?streamId=${streamId}&token=${livekitToken}&lang=${language}&format=${format}`);
+      // Step 2: Emit event to WebSocket server with the streamId obtained from the API
+      const socket = getSocket();
+      if (!socket.connected) {
+        socket.connect();
+        console.warn("[SubmitPage] Socket was not connected, attempting connect and emit.");
+      }
+
+      const socketPayload = {
+        youtubeUrl: url, // Still needed for ingestion-worker if it re-fetches ytdl-core info
+        targetLanguage: language,
+        clientRequestId: newClientRequestId, // The one we generated for this UI interaction
+        streamId: streamIdFromApi,       // The ID from the database record
+        format: format, // Pass format if ingestion/gpu worker need it
+      };
+
+      console.log('[SubmitPage] Emitting "initiate_youtube_translation" to WebSocket:', socketPayload);
+      socket.emit('initiate_youtube_translation', socketPayload);
+      
+      // The useEffect hook (listening to currentClientRequestId) will handle 'request_processing' 
+      // and redirect using streamIdFromApi.
+      // No explicit redirect here anymore. setIsLoading(false) will be handled by useEffect.
 
     } catch (err: any) {
-      console.error("Error during submission:", err);
+      console.error("Error during submission process:", err);
       setSubmissionError(err.message || "An unexpected error occurred. Please try again.");
       setIsSubmitting(false);
+      setCurrentClientRequestId(null); // Clear on catch
     }
   };
+  
+  useEffect(() => {
+    if (!currentClientRequestId) {
+      return;
+    }
+
+    const socket = getSocket();
+    let PinnedClientRequestId = currentClientRequestId; 
+
+    console.log(`[SubmitPage Effect] Setting up listeners for clientRequestId: ${PinnedClientRequestId}`);
+
+    const handleRequestProcessing = (data: { clientRequestId: string; streamId: string; message: string }) => {
+      console.log('[SubmitPage Effect] Received request_processing:', data);
+      if (data.clientRequestId === PinnedClientRequestId) {
+        console.log(`[SubmitPage Effect] Matched clientRequestId. Redirecting to /live?streamId=${data.streamId}`);
+        setIsSubmitting(false); 
+        router.push(`/live?streamId=${data.streamId}&lang=${language}&format=${format}`);
+        setCurrentClientRequestId(null); 
+      }
+    };
+
+    const handleRequestError = (data: { clientRequestId?: string; message: string; streamId?: string }) => {
+      console.log('[SubmitPage Effect] Received request_error/translation_error:', data);
+      if (data.clientRequestId === PinnedClientRequestId) { 
+        console.error(`[SubmitPage Effect] Error for clientRequestId ${PinnedClientRequestId}:`, data.message);
+        setSubmissionError(data.message || "An error occurred during submission.");
+        setIsSubmitting(false);
+        setCurrentClientRequestId(null); 
+      }
+    };
+
+    socket.on('request_processing', handleRequestProcessing);
+    socket.on('request_error', handleRequestError); 
+    socket.on('translation_error', handleRequestError); 
+
+    return () => {
+      console.log(`[SubmitPage Effect] Cleaning up listeners for clientRequestId: ${PinnedClientRequestId}`);
+      socket.off('request_processing', handleRequestProcessing);
+      socket.off('request_error', handleRequestError);
+      socket.off('translation_error', handleRequestError);
+    };
+  }, [currentClientRequestId, router, language, format]);
 
   const nextStep = () => {
     setSubmissionError(""); // Clear general submission error on step change attempt
@@ -265,13 +354,6 @@ export default function SubmitPage() {
                 </div>
               </form>
 
-              {/* Temporary test button for direct access to live page */}
-              <div className="mt-8 pt-4 border-t">
-                <p className="text-sm text-muted-foreground mb-2">Having trouble with the form? Try this test link:</p>
-                <Button type="button" variant="outline" onClick={goToLivePageTest} className="w-full">
-                  Go to Test Live Page
-                </Button>
-              </div>
             </CardContent>
           </Card>
         </div>
