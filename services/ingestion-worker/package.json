@@ -4,7 +4,7 @@
   "description": "Worker to ingest YouTube audio, process it, and queue for GPU worker",
   "main": "dist/index.js",
   "scripts": {
-    "dev": "ts-node src/index.ts",
+    "dev": "ts-node -r tsconfig-paths/register src/index.ts",
     "build": "tsc",
     "start": "node dist/index.js",
     "test": "echo \"Error: no test specified\" && exit 1"

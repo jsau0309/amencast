@@ -1,7 +1,8 @@
 console.log("--- Ingestion Worker: index.ts execution started ---");
 
 import Redis from 'ioredis';
-import { createClient, SupabaseClient } from '@supabase/supabase-js';
+import { createClient as createSupabaseClient, SupabaseClient } from '@supabase/supabase-js';
+import prisma from '@/lib/prisma'; // USE PATH ALIAS NOW
 import { config } from './config';
 import { Readable } from 'stream';
 
@@ -24,6 +25,8 @@ interface GpuJob {
   audioStoragePath: string;
   audioPublicUrl: string;
   languageTarget: string;
+  // Add youtubeVideoId if gpu-worker needs it for context, though it processes the audio directly
+  // youtubeVideoId: string;
 }
 
 let inputRedisClient: Redis | null = null;
@@ -73,7 +76,7 @@ function getOutputRedisClient(): Redis {
 function getSupabaseClient(): SupabaseClient {
   if (!supabase) {
     console.log('[IngestionWorker] Initializing Supabase client...');
-    supabase = createClient(config.supabase.url, config.supabase.serviceRoleKey, {
+    supabase = createSupabaseClient(config.supabase.url, config.supabase.serviceRoleKey, {
       auth: {
         persistSession: false, // No need to persist sessions for server-to-server
         autoRefreshToken: false,
@@ -87,21 +90,21 @@ function getSupabaseClient(): SupabaseClient {
 async function updateStreamStatusInDB(streamId: string, status: string, details?: string): Promise<void> {
     console.log(`[IngestionWorker] Updating stream ${streamId} status to: ${status}` + (details ? ` - ${details}` : ''));
     try {
-        const supabaseClient = getSupabaseClient();
-        const updateData: { status: string } = { status: status };
-        // We removed updated_at and details from direct update to simplify after schema issues
-        // If you re-add an 'updated_at' managed by Prisma, or a 'details' column, adjust here.
-
-        const { error } = await supabaseClient
-            .from('streams') 
-            .update(updateData)
-            .eq('id', streamId);
-
-        if (error) {
-            console.error(`[IngestionWorker] Error updating stream ${streamId} status in DB via Supabase client:`, error);
+        // const supabaseClient = getSupabaseClient(); // Not using Supabase client directly for this DB update
+        const updateData: any = { status: status }; // Prisma types will catch issues
+        if (details) {
+            // Ensure your Prisma schema for Stream has a 'details' or 'errorMessage' field if you want to store this.
+            // updateData.details = details; 
         }
+
+        await prisma.stream.update({
+            where: { id: streamId },
+            data: updateData,
+        });
+        console.log(`[IngestionWorker] Successfully updated stream ${streamId} status to ${status} in DB.`);
+
     } catch (dbUpdateError) {
-        console.error(`[IngestionWorker] Critical error in updateStreamStatusInDB for ${streamId}:`, dbUpdateError);
+        console.error(`[IngestionWorker] Critical error in updateStreamStatusInDB for ${streamId} via Prisma:`, dbUpdateError);
     }
 }
 
@@ -114,15 +117,14 @@ async function processIngestionJob(job: IngestionJob): Promise<void> {
     if (!ytdl.validateID(job.youtubeVideoId) && !ytdl.validateURL(job.youtubeVideoId)) {
         throw new Error(`Invalid YouTube Video ID or URL provided: ${job.youtubeVideoId}`);
     }
-    // Use only the ID for ytdl.getInfo for better reliability
     const videoId = ytdl.getVideoID(job.youtubeVideoId);
     console.log(`[IngestionWorker] Extracted YouTube Video ID: ${videoId}`);
 
     console.log(`[IngestionWorker] Fetching video info for ID: ${videoId}...`);
     const videoInfo = await ytdl.getInfo(videoId);
     const audioFormat = ytdl.chooseFormat(videoInfo.formats, {
-        quality: config.youtube.audioQuality, // No cast needed here
-        filter: 'audioonly'
+        quality: config.youtube.audioQuality as any, 
+        filter: 'audioonly' as any
     });
 
     if (!audioFormat) {
@@ -131,14 +133,13 @@ async function processIngestionJob(job: IngestionJob): Promise<void> {
     console.log(`[IngestionWorker] Chosen audio format:itag ${audioFormat.itag}, container ${audioFormat.container || 'unknown'}, mimeType ${audioFormat.mimeType}, approx duration ${videoInfo.videoDetails.lengthSeconds}s`);
 
     const supabaseClientInst = getSupabaseClient();
-    const fileExtension = audioFormat.container || 'mp3';
+    const fileExtension = audioFormat.container || 'mp3'; // Default to mp3 if container is unknown
     const filePathInBucket = `public/${job.streamId}.${fileExtension}`;
     
     console.log(`[IngestionWorker] Starting audio download. Will buffer then upload to Supabase Storage: ${config.supabase.audioBucket}/${filePathInBucket}`);
 
     const audioReadableStream: Readable = ytdl(videoId, { format: audioFormat });
 
-    // Buffer the stream into memory first
     const chunks: Buffer[] = [];
     for await (const chunk of audioReadableStream) {
         chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
@@ -146,10 +147,9 @@ async function processIngestionJob(job: IngestionJob): Promise<void> {
     const audioBuffer = Buffer.concat(chunks);
     console.log(`[IngestionWorker] Audio stream buffered. Total size: ${audioBuffer.length} bytes.`);
 
-    // Upload the buffered audio
     const { data: uploadData, error: uploadError } = await supabaseClientInst.storage
       .from(config.supabase.audioBucket)
-      .upload(filePathInBucket, audioBuffer, { // Changed from audioReadableStream to audioBuffer
+      .upload(filePathInBucket, audioBuffer, { 
         contentType: audioFormat.mimeType || 'audio/mpeg',
         upsert: true, 
       });
@@ -173,7 +173,7 @@ async function processIngestionJob(job: IngestionJob): Promise<void> {
     if (!signedUrlData || !signedUrlData.signedUrl) {
         throw new Error('Failed to get signed URL for the uploaded audio (no data returned).');
     }
-    const audioUrl = signedUrlData.signedUrl; // This will now be used as audioPublicUrl in the job
+    const audioUrl = signedUrlData.signedUrl;
     console.log(`[IngestionWorker] Audio available at signed public URL (expires in 7 days): ${audioUrl}`);
 
     await updateStreamStatusInDB(job.streamId, 'ingestion_complete_audio_ready');
@@ -182,9 +182,10 @@ async function processIngestionJob(job: IngestionJob): Promise<void> {
 
     const gpuJob: GpuJob = {
       streamId: job.streamId,
-      audioStoragePath: filePathInBucket,
+      audioStoragePath: filePathInBucket, // Ensure GpuJob interface in gpu-worker expects this
       audioPublicUrl: audioUrl,
       languageTarget: languageTarget,
+      // youtubeVideoId: videoId, // Optionally pass videoId if gpu-worker needs it
     };
 
     const outputRedis = getOutputRedisClient();
@@ -196,7 +197,7 @@ async function processIngestionJob(job: IngestionJob): Promise<void> {
     if (error instanceof Error) {
       errorMessage = error.message;
     }
-    console.error(`[IngestionWorker] Error processing ingestion job for stream ${job.streamId}:`, error); // Log the full error object too
+    console.error(`[IngestionWorker] Error processing ingestion job for stream ${job.streamId}:`, error);
     await updateStreamStatusInDB(job.streamId, 'ingestion_error', errorMessage);
   }
 }
@@ -204,9 +205,8 @@ async function processIngestionJob(job: IngestionJob): Promise<void> {
 async function startPolling(): Promise<void> {
   const inputRedis = getInputRedisClient();
   console.log(`[IngestionWorker] Attempting to connect input Redis client for polling...`);
-  await inputRedis.connect().catch(err => { // Explicitly connect if lazyConnect is true
+  await inputRedis.connect().catch(err => { 
       console.error("[IngestionWorker] Failed to connect input Redis for polling explicitly:", err);
-      // process.exit(1); // Optionally exit if cannot connect
   });
 
   if (inputRedis.status !== 'ready' && inputRedis.status !== 'connect') {
@@ -214,11 +214,10 @@ async function startPolling(): Promise<void> {
       await new Promise<void>((resolve, reject) => {
         inputRedis.once('ready', resolve);
         inputRedis.once('error', (err) => reject(new Error(`Input Redis client connection error before polling: ${err.message}`)) );
-        // Add a timeout for this wait
         setTimeout(() => reject(new Error('Timeout waiting for input Redis client to be ready')), 15000);
       }).catch(err => {
           console.error(err.message);
-          process.exit(1); // Exit if cannot get ready
+          process.exit(1); 
       });
   }
   console.log(`[IngestionWorker] Input Redis client ready (status: ${inputRedis.status}). Starting BRPOP loop on queue: ${config.redis.inputQueueName}.`);
@@ -228,7 +227,7 @@ async function startPolling(): Promise<void> {
       const result = await inputRedis.brpop(config.redis.inputQueueName, 0);
       if (isShuttingDown) {
         console.log('[IngestionWorker] Shutdown signal received during brpop wait, exiting loop.');
-        if (result) { // If a job was popped just before shutdown, re-queue it? For now, no.
+        if (result) { 
             console.log('[IngestionWorker] A job was popped during shutdown, it will not be processed by this instance.');
         }
         break;
@@ -263,12 +262,10 @@ async function startPolling(): Promise<void> {
 }
 
 function signalShutdownHandler() {
-  if (isShuttingDown) return; // Already shutting down
+  if (isShuttingDown) return; 
   console.log('[IngestionWorker] Shutdown signal received. Preparing to stop polling...');
   isShuttingDown = true;
 
-  // Attempt to gracefully close Redis connections
-  // ioredis disconnect() is non-blocking and returns a promise that resolves when fully closed.
   const inputDisconnectPromise = inputRedisClient?.disconnect() || Promise.resolve();
   const outputDisconnectPromise = (outputRedisClient && outputRedisClient !== inputRedisClient)
     ? outputRedisClient.disconnect()
@@ -282,24 +279,24 @@ function signalShutdownHandler() {
         process.exit(0);
     });
 
-  // Force exit after a timeout if graceful shutdown hangs
   setTimeout(() => {
     console.warn('[IngestionWorker] Graceful shutdown timeout. Forcing exit.');
     process.exit(1);
-  }, 10000); // 10 seconds timeout for graceful shutdown
+  }, 10000); 
 }
 
 async function main() {
   console.log('[IngestionWorker] Starting up...');
   getInputRedisClient();
   getOutputRedisClient();
-  getSupabaseClient();
+  getSupabaseClient(); 
+  // Prisma client is now globally available via import
 
   try {
     await startPolling();
   } catch (pollingError) {
     console.error('[IngestionWorker] Polling failed to start or unhandled error in polling loop:', pollingError);
-    signalShutdownHandler(); // Attempt graceful shutdown
+    signalShutdownHandler(); 
   }
 }
 
@@ -308,10 +305,9 @@ process.on('SIGTERM', signalShutdownHandler);
 
 main().catch(err => {
   console.error('[IngestionWorker] Unhandled critical error in main execution:', err);
-  // Ensure a shutdown attempt even on unhandled main errors
   if (!isShuttingDown) {
       signalShutdownHandler();
   } else {
-      process.exit(1); // If already shutting down, just exit.
+      process.exit(1); 
   }
 });
