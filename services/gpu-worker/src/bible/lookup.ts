@@ -82,6 +82,13 @@ const BOOK_ALIASES: { [alias: string]: string } = {
 
 let db: Database.Database;
 
+/**
+ * Returns a singleton connection to the local Bible SQLite database.
+ *
+ * @returns The active SQLite database connection.
+ *
+ * @throws {Error} If the database connection cannot be established.
+ */
 function getDbConnection(): Database.Database {
   if (!db || !db.open) {
     try {
@@ -94,6 +101,15 @@ function getDbConnection(): Database.Database {
   return db;
 }
 
+/**
+ * Normalizes a parsed Bible book name and optional numeric prefix to a canonical book ID.
+ *
+ * Combines the prefix (e.g., "1st", "ii") and book name, standardizes formatting, and maps the result to a canonical book ID using known aliases.
+ *
+ * @param parsedBookPrefix - Optional numeric or Roman numeral prefix for the book (e.g., "1st", "ii").
+ * @param parsedBookName - The name of the Bible book as parsed from input.
+ * @returns The canonical book ID if recognized, or null if no match is found.
+ */
 function normalizeBookName(parsedBookPrefix: string | undefined, parsedBookName: string): string | null {
   let fullBookQuery = parsedBookName.toLowerCase().trim().replace(/\s+/g, ' ');
   if (parsedBookPrefix) {
@@ -129,6 +145,14 @@ export interface ParsedReference {
     endVerse?: number;
 }
 
+/**
+ * Parses a Bible reference string and returns a structured reference object.
+ *
+ * Attempts to extract the canonical book ID, chapter, and verse range from the input text. Returns `null` if the reference is invalid or cannot be normalized.
+ *
+ * @param text - The Bible reference string to parse (e.g., "John 3:16", "1 John 3:16-18").
+ * @returns A {@link ParsedReference} object with book ID, chapter, and verse range, or `null` if parsing fails.
+ */
 export function parseBibleReference(text: string): ParsedReference | null {
     const match = BIBLE_REFERENCE_REGEX.exec(text.trim());
     if (!match) {
@@ -172,6 +196,14 @@ export function parseBibleReference(text: string): ParsedReference | null {
 }
 
 
+/**
+ * Looks up and returns the Spanish text of Bible verses corresponding to a reference found in the input string.
+ *
+ * Parses the input for a Bible reference, normalizes the book name, and queries a local SQLite database for the specified verses in Spanish. Returns the combined verse text if found, or `null` if the reference is invalid or not found.
+ *
+ * @param textSegment - A string potentially containing a Bible reference (e.g., "Juan 3:16", "1 Corintios 13:4-7").
+ * @returns The Spanish text of the referenced Bible verse(s), or `null` if the reference is invalid or not found.
+ */
 export async function findSpanishReference(textSegment: string): Promise<string | null> {
   const parsedRef = parseBibleReference(textSegment);
 

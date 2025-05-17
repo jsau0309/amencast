@@ -50,7 +50,14 @@ const streamIdToClientRequestMap = new Map<string, string>();
 
 console.log('[WebSocketServer] Starting server setup...');
 
-// Helper function to extract YouTube Video ID
+/**
+ * Extracts the YouTube video ID from a given YouTube URL.
+ *
+ * Supports standard YouTube URLs (youtube.com) and shortened URLs (youtu.be). Returns null if the URL is invalid or does not contain a video ID.
+ *
+ * @param url - The YouTube URL to parse.
+ * @returns The extracted video ID, or null if extraction fails.
+ */
 function extractYouTubeVideoId(url: string): string | null {
   let videoId: string | null = null;
   try {
@@ -67,6 +74,12 @@ function extractYouTubeVideoId(url: string): string | null {
   return videoId;
 }
 
+/**
+ * Continuously polls the Redis results queue for completed translation jobs and relays results to the appropriate connected client sockets.
+ *
+ * @remark
+ * If the Redis connection is lost, the function attempts to reconnect and resumes polling. Malformed or invalid job results are skipped without interrupting the listener.
+ */
 async function listenForResults() {
   console.log(`[WebSocketServer] Results listener starting. Polling Redis queue: ${config.redis.resultsQueueName}`);
   try {

@@ -39,6 +39,14 @@ interface ChapterData {
   };
 }
 
+/**
+ * Loads Spanish Bible verse data from JSON files and inserts it into the database.
+ *
+ * Reads book and chapter metadata, extracts verse text for each Spanish verse, and batch inserts new verses into the database while skipping duplicates. Handles missing or malformed files gracefully and logs progress throughout the process.
+ *
+ * @remark
+ * Verses with missing or empty Spanish text are skipped. Missing chapter files are logged as warnings and do not interrupt the loading process.
+ */
 async function loadBibleData() {
   console.log('Starting Spanish Bible data load...');
   let totalVersesProcessed = 0;

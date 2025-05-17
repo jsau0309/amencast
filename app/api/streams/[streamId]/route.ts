@@ -13,8 +13,12 @@ interface RouteParams {
 }
 
 /**
- * Handles GET requests to the /api/streams/[streamId] endpoint.
- * Returns details for a specific stream if it belongs to the authenticated user.
+ * Handles GET requests to retrieve details of a specific stream by its ID for the authenticated user.
+ *
+ * @param context - Contains the route parameters, including the {@link streamId} identifying the stream to fetch.
+ * @returns A JSON response with the stream details if found and accessible, or an error message with the appropriate HTTP status code.
+ *
+ * @remark Returns a 401 response if the user is not authenticated, a 400 response if {@link streamId} is missing, a 404 response if the stream does not exist or access is denied, and a 500 response for unexpected server errors.
  */
 export async function GET(
   request: NextRequest, 

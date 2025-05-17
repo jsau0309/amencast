@@ -9,6 +9,13 @@ const CreateStreamSchema = z.object({
   format: z.string().optional(), 
 });
 
+/**
+ * Handles creation of a new stream for an authenticated user.
+ *
+ * Validates the request body for a YouTube URL and optional language and format fields, extracts the YouTube video ID, and creates a new stream record in the database with status set to "pending_ingestion". Returns the created stream's ID, YouTube video ID, status, language target, and format.
+ *
+ * @returns A JSON response with stream details and HTTP status 201 on success, or an error message with appropriate status code on failure.
+ */
 export async function POST(req: NextRequest) {
   try {
     const { userId: clerkUserId } = getAuth(req as any); 
@@ -69,8 +76,9 @@ export async function POST(req: NextRequest) {
 }
 
 /**
- * Handles GET requests to the /api/streams endpoint.
- * Returns a list of streams for the authenticated user.
+ * Retrieves all streams associated with the authenticated user.
+ *
+ * @returns A JSON response containing the user's streams, ordered by most recent, or an error message with the appropriate HTTP status code.
  */
 export async function GET(req: NextRequest) {
   try {

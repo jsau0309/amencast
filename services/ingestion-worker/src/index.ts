@@ -35,6 +35,13 @@ let supabase: SupabaseClient | null = null; // Typed SupabaseClient
 
 let isShuttingDown = false;
 
+/**
+ * Lazily initializes and returns the singleton Redis client for the input queue.
+ *
+ * @returns The Redis client instance used for polling ingestion jobs.
+ *
+ * @remark The client is initialized only once and reused for subsequent calls.
+ */
 function getInputRedisClient(): Redis {
   if (!inputRedisClient) {
     console.log('[IngestionWorker] Initializing Input Redis client...');
@@ -53,6 +60,13 @@ function getInputRedisClient(): Redis {
   return inputRedisClient;
 }
 
+/**
+ * Lazily initializes and returns the singleton Redis client for the output queue.
+ *
+ * @returns The Redis client instance used for output queue operations.
+ *
+ * @remark The client is initialized only once and reused for subsequent calls.
+ */
 function getOutputRedisClient(): Redis {
   // If using the same Redis instance for input and output queues, this can be simplified.
   // For now, assuming they could be different or managed separately for clarity.
@@ -73,6 +87,11 @@ function getOutputRedisClient(): Redis {
   return outputRedisClient;
 }
 
+/**
+ * Lazily initializes and returns a singleton Supabase client configured for server-to-server operations.
+ *
+ * @returns The Supabase client instance.
+ */
 function getSupabaseClient(): SupabaseClient {
   if (!supabase) {
     console.log('[IngestionWorker] Initializing Supabase client...');
@@ -87,6 +106,15 @@ function getSupabaseClient(): SupabaseClient {
   return supabase;
 }
 
+/**
+ * Updates the status of a stream in the database.
+ *
+ * If provided, additional details may be included in the update, depending on schema support.
+ *
+ * @param streamId - The unique identifier of the stream to update.
+ * @param status - The new status to set for the stream.
+ * @param details - Optional additional information about the status update.
+ */
 async function updateStreamStatusInDB(streamId: string, status: string, details?: string): Promise<void> {
     console.log(`[IngestionWorker] Updating stream ${streamId} status to: ${status}` + (details ? ` - ${details}` : ''));
     try {
@@ -108,6 +136,13 @@ async function updateStreamStatusInDB(streamId: string, status: string, details?
     }
 }
 
+/**
+ * Processes an ingestion job by downloading audio from a YouTube video, uploading it to Supabase Storage, updating the stream status in the database, and enqueuing a GPU processing job.
+ *
+ * @param job - The ingestion job containing the stream ID, YouTube video ID or URL, and optional language target.
+ *
+ * @throws {Error} If the YouTube video ID or URL is invalid, if no suitable audio format is found, if uploading to Supabase Storage fails, or if generating a signed URL fails.
+ */
 async function processIngestionJob(job: IngestionJob): Promise<void> {
   console.log(`[IngestionWorker] Processing job for streamId: ${job.streamId}, youtubeVideoId: ${job.youtubeVideoId}`);
   await updateStreamStatusInDB(job.streamId, 'ingestion_started');
@@ -202,6 +237,13 @@ async function processIngestionJob(job: IngestionJob): Promise<void> {
   }
 }
 
+/**
+ * Continuously polls the Redis input queue for ingestion jobs, processes each job, and handles shutdown signals gracefully.
+ *
+ * Waits for the input Redis client to be ready, then enters a blocking loop using BRPOP to receive jobs. Each job is parsed and validated before being processed. Handles errors and shutdown events to ensure clean exit and robust operation.
+ *
+ * @remark Exits the polling loop immediately if a shutdown signal is received, even if a job is received during shutdown.
+ */
 async function startPolling(): Promise<void> {
   const inputRedis = getInputRedisClient();
   console.log(`[IngestionWorker] Attempting to connect input Redis client for polling...`);
@@ -261,6 +303,11 @@ async function startPolling(): Promise<void> {
   console.log('[IngestionWorker] Polling loop stopped.');
 }
 
+/**
+ * Handles process termination signals by initiating a graceful shutdown.
+ *
+ * Disconnects Redis clients, logs shutdown progress, and forces process exit if shutdown does not complete within 10 seconds.
+ */
 function signalShutdownHandler() {
   if (isShuttingDown) return; 
   console.log('[IngestionWorker] Shutdown signal received. Preparing to stop polling...');
@@ -285,6 +332,11 @@ function signalShutdownHandler() {
   }, 10000); 
 }
 
+/**
+ * Initializes clients and starts the ingestion worker polling loop.
+ *
+ * Sets up Redis and Supabase clients, then begins polling for ingestion jobs. Handles unhandled errors by triggering a graceful shutdown.
+ */
 async function main() {
   console.log('[IngestionWorker] Starting up...');
   getInputRedisClient();

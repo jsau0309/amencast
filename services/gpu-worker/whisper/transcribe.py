@@ -13,6 +13,12 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 
 # --- Argument Parsing ---
 def parse_arguments():
+    """
+    Parses command-line arguments for audio transcription configuration.
+    
+    Returns:
+        Namespace: Parsed arguments including audio source, model size, device, and compute type.
+    """
     parser = argparse.ArgumentParser(description='Transcribe audio using faster-whisper.')
     parser.add_argument('audio_source', type=str, help='Path or URL to the audio file.')
     parser.add_argument('--model_size', type=str, default='large-v3', 
@@ -24,6 +30,12 @@ def parse_arguments():
 
 # --- Audio Handling ---
 def download_audio(url):
+    """
+    Downloads an audio file from a given URL and saves it to a temporary file.
+    
+    If the download is successful, returns the path to the temporary file containing the audio.
+    Returns None if the download fails due to network or HTTP errors.
+    """
     logging.info(f"Downloading audio from: {url}")
     try:
         response = requests.get(url, stream=True, timeout=30) # Add timeout
@@ -45,6 +57,11 @@ def download_audio(url):
 
 # --- Main Transcription Logic ---
 def main():
+    """
+    Executes the audio transcription workflow from argument parsing to output.
+    
+    Parses command-line arguments, handles audio file retrieval (including downloading from URLs), loads the Whisper model, performs transcription, and outputs the result as JSON to standard output. Handles errors gracefully and ensures cleanup of temporary files.
+    """
     args = parse_arguments()
     logging.info(f"Starting transcription with model: {args.model_size}, device: {args.device}, compute_type: {args.compute_type}")
     

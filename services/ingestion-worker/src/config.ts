@@ -4,6 +4,17 @@ import path from 'path';
 // Load .env file from the root of ingestion-worker
 dotenv.config({ path: path.resolve(__dirname, '../.env') });
 
+/**
+ * Retrieves the value of a required environment variable.
+ *
+ * Throws an error if the environment variable specified by {@link key} is missing or empty. If {@link isSensitive} is true, the error message indicates the variable is sensitive.
+ *
+ * @param key - The name of the environment variable to retrieve.
+ * @param isSensitive - Whether the variable is sensitive; affects the error message if missing.
+ * @returns The value of the environment variable.
+ *
+ * @throws {Error} If the environment variable is missing or empty.
+ */
 function getEnvVar(key: string, isSensitive: boolean = false): string {
   const value = process.env[key];
   if (value === undefined || value === null || value === '') {

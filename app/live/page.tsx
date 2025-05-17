@@ -51,6 +51,15 @@ const FEEDBACK_OPTIONS = [
   { value: "OTHER", label: "Other Feedback" },
 ];
 
+/**
+ * Displays a livestream page with translated audio, allowing users to toggle between video+audio and audio-only modes, listen to translated audio, and submit feedback.
+ *
+ * Fetches stream metadata, establishes a Socket.IO connection to receive translation results, and manages playback of translated audio alongside the original YouTube livestream. Handles authentication, error states, and user feedback submission within a responsive UI.
+ *
+ * @returns The React component for the livestream translation page.
+ *
+ * @remark The component automatically mutes the YouTube player when translated audio is played in video+audio mode, but does not unmute it when translated audio is paused.
+ */
 export default function LivestreamPage() {
   const searchParams = useSearchParams();
   const router = useRouter();
