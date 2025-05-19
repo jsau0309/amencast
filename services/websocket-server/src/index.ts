@@ -28,7 +28,7 @@ if (config.redis.password) {
 }
 
 if (config.redis.tlsEnabled) {
-  redisOptions.tls = {}; // Enable TLS, empty object is usually sufficient for Upstash rediss://
+  redisOptions.tls = {}; 
 }
 
 // Initialize Redis clients with the options object

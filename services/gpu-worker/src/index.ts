@@ -38,8 +38,10 @@ const redisOptions: RedisOptions = {
   lazyConnect: true,
 };
 if (config.redis.password) redisOptions.password = config.redis.password;
-if (config.redis.tlsEnabled) redisOptions.tls = { rejectUnauthorized: false }; // rejectUnauthorized: false might be needed for some Upstash setups, adjust if necessary
 
+if (config.redis.tlsEnabled) {
+  redisOptions.tls = {}; // Just an empty object
+}
 const inputRedisClient = new Redis(redisOptions);
 const outputRedisClient = new Redis(redisOptions); // Can use the same options if same Redis instance
 
@@ -175,40 +177,39 @@ async function processGpuJob(job: GpuJob): Promise<void> {
     
     const ttsFileWriter = fs.createWriteStream(temporaryTtsPath!);
 
-    // Handle the stream from ElevenLabs: it might be an AsyncIterable<Buffer or Uint8Array>
     console.log('[GPWorker] Iterating ElevenLabs TTS response...');
     let chunkCount = 0;
+    let successfullyWroteChunks = false;
     for await (const chunk of (ttsResponse as AsyncIterable<any>)) {
         chunkCount++;
-        if (chunk instanceof Buffer) {
+        if (chunk instanceof Buffer || chunk instanceof Uint8Array) {
             ttsFileWriter.write(chunk);
-        } else if (chunk instanceof Uint8Array) { // Explicitly handle Uint8Array
-            ttsFileWriter.write(chunk); // fs.WriteStream can handle Uint8Array directly
-        } else if (typeof chunk === 'string') { 
-            console.warn('[GPWorker] ElevenLabs TTS async chunk is a string, converting to Buffer.');
-            ttsFileWriter.write(Buffer.from(chunk));
-        } else if (chunk && typeof chunk === 'object' && (chunk as any).data instanceof Buffer) {
-            // Fallback for some SDKs that might wrap buffer in { data: Buffer }
-            console.log('[GPWorker] ElevenLabs TTS chunk is an object with a data Buffer.');
-            ttsFileWriter.write((chunk as any).data);
+            successfullyWroteChunks = true;
         } else {
-            console.error('[GPWorker] Unhandled or unexpected chunk type from ElevenLabs TTS stream. Chunk #', chunkCount, 'Type:', typeof chunk, 'Value:', chunk);
-            // Depending on strictness, you might throw an error here or try Buffer.from(chunk) as a last resort if applicable
-            // For now, we'll attempt Buffer.from() for unknown objects that aren't buffers/uint8arrays/strings
+            // Log the first unexpected chunk type once for diagnostics
+            if (chunkCount === 1) { 
+                console.warn(`[GPWorker] ElevenLabs TTS stream chunk type is unexpected (chunk #1 Type: ${typeof chunk}). Attempting Buffer.from(). Details:`, chunk);
+            }
             try {
-                console.warn('[GPWorker] Attempting Buffer.from() on unknown chunk type.');
                 ttsFileWriter.write(Buffer.from(chunk as any)); 
+                successfullyWroteChunks = true;
             } catch (conversionError) {
-                console.error('[GPWorker] Failed to convert unknown chunk to Buffer. Skipping chunk.', conversionError);
+                console.error(`[GPWorker] Failed to convert chunk to Buffer and write. Chunk #${chunkCount}. Skipping. Error:`, conversionError);
+                // Decide if this should be a fatal error for the job
             }
         }
     }
+
     if (chunkCount === 0) {
         console.warn('[GPWorker] ElevenLabs TTS stream iterable was empty. No data written to file.');
-        // This might indicate an issue with the TTS request or an empty audio response
-        // Consider throwing an error if an empty audio file is not acceptable
-        // throw new Error("ElevenLabs TTS returned no audio data.");
+        // Consider this an error if an audio file is expected
+        throw new Error("ElevenLabs TTS returned no audio data."); 
     }
+    if (!successfullyWroteChunks && chunkCount > 0) {
+        // This means all chunks were of an unhandled type that also failed Buffer.from()
+        throw new Error("ElevenLabs TTS data chunks could not be processed into a file.");
+    }
+
     ttsFileWriter.end();
 
     await new Promise<void>((resolve, reject) => {
