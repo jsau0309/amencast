@@ -5,6 +5,10 @@ import { createClient as createSupabaseClient, SupabaseClient } from '@supabase/
 import prisma from '@/lib/prisma'; // USE PATH ALIAS NOW
 import { config } from './config';
 import { Readable } from 'stream';
+import { spawn } from 'child_process';
+import http from 'http';
+import express, { Request, Response } from 'express';
+
 
 console.log("--- About to require ytdl-core ---");
 const ytdl: any = require('ytdl-core');
@@ -29,11 +33,102 @@ interface GpuJob {
   // youtubeVideoId: string;
 }
 
+interface InitiateStreamRequestBody {
+  youtubeUrl: string;
+  streamId: string;
+}
+
 let inputRedisClient: Redis | null = null;
 let outputRedisClient: Redis | null = null; // Could be the same instance if connecting to the same Redis
 let supabase: SupabaseClient | null = null; // Typed SupabaseClient
 
 let isShuttingDown = false;
+
+async function getYouTubeAudioUrl(youtubeUrl: string): Promise<string> {
+  console.log(`[IngestionWorker] Getting audio URL for: ${youtubeUrl}`);
+  return new Promise((resolve, reject) => {
+    const ytdlp = spawn('yt-dlp', [
+      '-f', 'bestaudio', // Get the best audio-only format
+      '--get-url',      // Instruct yt-dlp to output only the direct URL
+      youtubeUrl        // The YouTube video URL to process
+    ]);
+
+    let audioUrl = '';
+    let errorOutput = '';
+
+    // Listen for data on stdout (this will be our URL)
+    ytdlp.stdout.on('data', (data) => {
+      audioUrl += data.toString();
+    });
+
+    // Listen for data on stderr (for errors or verbose output from yt-dlp)
+    ytdlp.stderr.on('data', (data) => {
+      const stderrChunk = data.toString();
+      errorOutput += stderrChunk;
+      // You might want to be selective about what from stderr is a true error vs. progress
+      console.log(`[IngestionWorker] yt-dlp stderr: ${stderrChunk.trim()}`);
+    });
+
+    // Handle process exit
+    ytdlp.on('close', (code) => {
+      const trimmedUrl = audioUrl.trim();
+      if (code === 0 && trimmedUrl && trimmedUrl.startsWith('http')) {
+        console.log(`[IngestionWorker] yt-dlp succeeded. Audio URL: ${trimmedUrl}`);
+        resolve(trimmedUrl);
+      } else {
+        const errorMessage = `yt-dlp process exited with code ${code}. Output: "${trimmedUrl}". Stderr: "${errorOutput.trim()}"`;
+        console.error(`[IngestionWorker] ${errorMessage}`);
+        reject(new Error(errorMessage));
+      }
+    });
+
+    // Handle errors in spawning the process itself
+    ytdlp.on('error', (err) => {
+      console.error('[IngestionWorker] Failed to start yt-dlp process:', err);
+      reject(err);
+    });
+  });
+}
+
+function streamAndTranscodeAudioSpawn(audioStreamUrl: string, streamId: string): Readable {
+  console.log(`[IngestionWorker] Starting ffmpeg (spawn) for streamId ${streamId}. URL: ${audioStreamUrl.substring(0, 100)}...`);
+  const ffmpegProcess = spawn('ffmpeg', [
+    '-i', audioStreamUrl,    // Input from the URL yt-dlp provided
+    '-f', 's16le',           // Output format: signed 16-bit PCM, little-endian
+    '-ar', '16000',          // Output sample rate: 16000 Hz
+    '-ac', '1',              // Output audio channels: 1 (mono)
+    '-'                      // Output to stdout
+  ]);
+
+  // Optional: Log stderr from ffmpeg for debugging
+  // ffmpeg often outputs progress/info to stderr.
+  ffmpegProcess.stderr.on('data', (data) => {
+    console.log(`[IngestionWorker] ffmpeg stderr for ${streamId}: ${data.toString().trim()}`);
+  });
+
+  ffmpegProcess.on('error', (err) => {
+    // This event is for errors in spawning the process itself (e.g., ffmpeg not found)
+    console.error(`[IngestionWorker] Failed to start ffmpeg process for ${streamId}:`, err);
+    // It's crucial to destroy the stdout stream to signal the error to consumers
+    ffmpegProcess.stdout.destroy(err);
+  });
+  
+  ffmpegProcess.on('close', (code) => {
+    console.log(`[IngestionWorker] ffmpeg process for ${streamId} exited with code ${code}`);
+    if (code !== 0) {
+      // If ffmpeg exits with an error code, emit an error on its stdout stream
+      // so that any pipes listening to it are aware.
+      const errMsg = `ffmpeg process for ${streamId} exited with error code ${code}.`;
+      console.error(`[IngestionWorker] ${errMsg}`);
+      // ffmpegProcess.stdout.destroy(new Error(errMsg)); // Use destroy if stream hasn't ended
+    }
+    // If code is 0, the stdout stream would have ended naturally when ffmpeg finished.
+    // If code is non-zero, and stdout hasn't ended, an error should have been emitted.
+  });
+
+  // The stdout of the ffmpeg process is our raw PCM audio stream
+  return ffmpegProcess.stdout;
+}
 
 /**
  * Lazily initializes and returns the singleton Redis client for the input queue.
@@ -344,11 +439,94 @@ async function main() {
   getSupabaseClient(); 
   // Prisma client is now globally available via import
 
+  // Setup Express server
+  const app = express();
+  const PORT = process.env.INGESTION_WORKER_PORT || 3002; 
+  app.use(express.json());
+
+  app.post('/initiate-stream-processing', async (req: Request<{}, {}, InitiateStreamRequestBody>, res: Response): Promise<void> => {
+    const { youtubeUrl, streamId } = req.body;
+
+    if (!youtubeUrl || !streamId) {
+      console.error('[IngestionWorker] /initiate-stream-processing: Missing youtubeUrl or streamId in request.');
+      res.status(400).json({ error: 'Missing youtubeUrl or streamId' });
+      return;
+    }
+
+    console.log(`[IngestionWorker] /initiate-stream-processing: Received request for streamId: ${streamId}, url: ${youtubeUrl}`);
+
+    try {
+      const fetchedAudioUrl = await getYouTubeAudioUrl(youtubeUrl);
+      console.log(`[IngestionWorker] /initiate-stream-processing: Got audio URL for ${streamId}: ${fetchedAudioUrl.substring(0, 100)}...`);
+      const pcmAudioStream = streamAndTranscodeAudioSpawn(fetchedAudioUrl, streamId);
+      const websocketServerHost = process.env.WEBSOCKET_SERVER_HOST || 'localhost';
+      const websocketServerPort = parseInt(process.env.WEBSOCKET_SERVER_PORT || '3001', 10);
+      const targetPath = `/mock/internal/audio-stream/${streamId}`;
+      const options: http.RequestOptions = {
+        hostname: websocketServerHost,
+        port: websocketServerPort,
+        path: targetPath,
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/octet-stream',
+        },
+      };
+      console.log(`[IngestionWorker] /initiate-stream-processing: Piping PCM audio for ${streamId} to ws-server at http://${websocketServerHost}:${websocketServerPort}${targetPath}`);
+      const upstreamHttpRequest = http.request(options, (upstreamRes) => {
+        let responseBody = '';
+        upstreamRes.on('data', (chunk) => responseBody += chunk);
+        upstreamRes.on('end', () => {
+          console.log(`[IngestionWorker] /initiate-stream-processing: Upstream POST to websocket-server for ${streamId} completed with status ${upstreamRes.statusCode}. Body: ${responseBody}`);
+          if (upstreamRes.statusCode !== 200) {
+            console.error(`[IngestionWorker] /initiate-stream-processing: Error response from websocket-server for ${streamId}: ${upstreamRes.statusCode}`);
+          }
+        });
+      });
+      upstreamHttpRequest.on('error', (e) => {
+        console.error(`[IngestionWorker] /initiate-stream-processing: Problem with upstream HTTP POST for ${streamId}: ${e.message}`);
+        if (!pcmAudioStream.destroyed) {
+          pcmAudioStream.destroy();
+        }
+      });
+      pcmAudioStream.pipe(upstreamHttpRequest);
+      pcmAudioStream.on('error', (err) => {
+        console.error(`[IngestionWorker] /initiate-stream-processing: Error from pcmAudioStream (ffmpeg) for ${streamId}:`, err.message);
+        if (!upstreamHttpRequest.destroyed) {
+          upstreamHttpRequest.destroy(err);
+        }
+      });
+      pcmAudioStream.on('end', () => {
+        console.log(`[IngestionWorker] /initiate-stream-processing: pcmAudioStream for ${streamId} ended. Upstream HTTP request should complete.`);
+      });
+      res.status(202).json({ message: 'Stream processing initiated', streamId: streamId });
+    } catch (error: any) {
+      console.error(`[IngestionWorker] /initiate-stream-processing: Error processing stream ${streamId}:`, error.message);
+      if (!res.headersSent) {
+        res.status(500).json({ error: 'Failed to initiate stream processing', details: error.message });
+        return;
+      }
+    }
+  });
+
+  // START THE HTTP SERVER *BEFORE* THE BLOCKING POLLING LOOP
+  app.listen(PORT, () => {
+    console.log(`[IngestionWorker] HTTP server listening on port ${PORT}`);
+  });
+  // END OF Express server setup
+
+  // Now, decide on startPolling(). If it's for a different type of job, it can run.
+  // If this HTTP endpoint is the new primary way, you might not need startPolling for this worker.
   try {
-    await startPolling();
+    // If startPolling is essential for other tasks and non-blocking, or you want it to run:
+    // await startPolling(); 
+    // OR if it's meant to run in parallel and is non-blocking, just call it:
+    // startPolling(); 
+    // For now, to ensure HTTP server starts, let's comment it out or make it non-blocking
+    console.log('[IngestionWorker] Skipping startPolling() for now to ensure HTTP server is primary.');
+    // await startPolling(); // Or simply remove if not needed for this new flow
   } catch (pollingError) {
     console.error('[IngestionWorker] Polling failed to start or unhandled error in polling loop:', pollingError);
-    signalShutdownHandler(); 
+    // signalShutdownHandler(); // Decide if this is fatal
   }
 }
 

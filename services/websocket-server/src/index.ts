@@ -4,6 +4,7 @@ import { Server as SocketIOServer, Socket } from 'socket.io';
 import { Redis, RedisOptions } from 'ioredis';
 import { v4 as uuidv4 } from 'uuid';
 import { config } from './config';
+import axios from 'axios';
 
 const app = express();
 const server = http.createServer(app);
@@ -63,13 +64,20 @@ function extractYouTubeVideoId(url: string): string | null {
   try {
     const urlObj = new URL(url);
     if (urlObj.hostname === 'www.youtube.com' || urlObj.hostname === 'youtube.com') {
-      videoId = urlObj.searchParams.get('v');
+      if (urlObj.pathname.startsWith('/shorts/')) {
+        videoId = urlObj.pathname.substring('/shorts/'.length);
+      } else {
+        videoId = urlObj.searchParams.get('v');
+      }
     } else if (urlObj.hostname === 'youtu.be') {
       videoId = urlObj.pathname.slice(1);
     }
   } catch (error) {
     console.error('[WebSocketServer] Error parsing YouTube URL:', url, error);
     return null;
+  }
+  if (videoId && videoId.includes('?')) {
+    videoId = videoId.substring(0, videoId.indexOf('?'));
   }
   return videoId;
 }
@@ -157,6 +165,34 @@ async function listenForResults() {
   }
 }
 
+app.post('/mock/internal/audio-stream/:streamId', (req, res) => {
+  const streamId = req.params.streamId;
+  let totalBytesReceived = 0;
+  console.log(`[WebSocketServer] MOCK /internal/audio-stream/${streamId}: Connection received.`);
+
+  req.on('data', (chunk: Buffer) => {
+    totalBytesReceived += chunk.length;
+    console.log(`[WebSocketServer] MOCK /internal/audio-stream/${streamId}: Received chunk: ${chunk.length} bytes. Total: ${totalBytesReceived} bytes.`);
+  });
+
+  req.on('end', () => {
+    console.log(`[WebSocketServer] MOCK /internal/audio-stream/${streamId}: Stream ended. Total bytes received: ${totalBytesReceived}`);
+    res.status(200).send('Stream received by mock endpoint.');
+  });
+
+  req.on('error', (err) => {
+    console.error(`[WebSocketServer] MOCK /internal/audio-stream/${streamId}: Error on request stream:`, err);
+    if (!res.headersSent) {
+      res.status(500).send('Error receiving stream.');
+    }
+  });
+
+  // Optional: Handle client disconnects if the sender closes the connection prematurely
+  req.on('close', () => {
+      console.log(`[WebSocketServer] MOCK /internal/audio-stream/${streamId}: Connection closed by client. Total bytes at close: ${totalBytesReceived}`);
+  });
+});
+
 io.on('connection', (socket: Socket) => {
   console.log(`[WebSocketServer] Client connected: ${socket.id}`);
 
@@ -197,28 +233,53 @@ io.on('connection', (socket: Socket) => {
       return;
     }
 
-    const ingestionJob = {
-      streamId: streamIdFromClient,
-      youtubeVideoId: youtubeVideoId,
-    };
-
     try {
-      await publisherRedis.lpush(config.redis.ingestionQueueName, JSON.stringify(ingestionJob));
-      console.log(`[WebSocketServer] Queued ingestion job for DB streamId ${streamIdFromClient} (clientRequestId ${data.clientRequestId}) to ${config.redis.ingestionQueueName}`);
-      socket.emit('request_processing', {
+      const ingestionWorkerHost = process.env.INGESTION_WORKER_INTERNAL_HOST || 'localhost'; // Use env vars for config
+      const ingestionWorkerPort = process.env.INGESTION_WORKER_INTERNAL_PORT || 3002;
+      const ingestionEndpoint = `http://${ingestionWorkerHost}:${ingestionWorkerPort}/initiate-stream-processing`;
+
+      console.log(`[WebSocketServer] Calling ingestion-worker endpoint for streamId ${streamIdFromClient}: ${ingestionEndpoint}`);
+
+      // Using axios for the POST request:
+      const response = await axios.post(ingestionEndpoint, {
+        youtubeUrl: data.youtubeUrl, // Send the full URL
+        streamId: streamIdFromClient
+      });
+
+      if (response.status === 202) {
+        console.log(`[WebSocketServer] Successfully initiated stream processing with ingestion-worker for streamId ${streamIdFromClient}. Response:`, response.data);
+        socket.emit('request_processing', { // Or a new event like 'realtime_stream_initiated'
+          clientRequestId: data.clientRequestId,
+          streamId: streamIdFromClient,
+          message: 'Real-time stream processing initiated.'
+        });
+      } else {
+        // This case might not be hit if axios throws for non-2xx, but good for robustness
+        console.error(`[WebSocketServer] ingestion-worker responded with status ${response.status} for streamId ${streamIdFromClient}. Data:`, response.data);
+        socket.emit('request_error', {
+          clientRequestId: data.clientRequestId,
+          streamId: streamIdFromClient,
+          message: `Failed to initiate stream processing with ingestion-worker (status ${response.status}).`
+        });
+      }
+    } catch (error: any) {
+      console.error(`[WebSocketServer] Error calling ingestion-worker for streamId ${streamIdFromClient}:`, error.message);
+      let detailMessage = 'Server error: Could not contact ingestion service.';
+      if (axios.isAxiosError(error) && error.response) {
+          console.error('[WebSocketServer] Ingestion-worker error response data:', error.response.data);
+          detailMessage = `Ingestion service error (status ${error.response.status}): ${error.response.data?.error || error.message}`;
+      } else if (axios.isAxiosError(error) && error.request) {
+          console.error('[WebSocketServer] Ingestion-worker no response:', error.request);
+          detailMessage = 'No response from ingestion service.';
+      }
+      socket.emit('request_error', {
         clientRequestId: data.clientRequestId,
         streamId: streamIdFromClient,
-        message: 'Request received and queued for ingestion.'
+        message: detailMessage
       });
-    } catch (error) {
-      console.error('[WebSocketServer] Error queuing ingestion job to Redis:', error);
-      socket.emit('request_error', { 
-        clientRequestId: data.clientRequestId, 
-        streamId: streamIdFromClient,
-        message: 'Server error: Could not queue request for processing.' 
-      });
-      clientRequestToSocketIdMap.delete(data.clientRequestId);
-      streamIdToClientRequestMap.delete(streamIdFromClient);
+      // Consider if you need to clean up maps if the initiation fails here
+      // clientRequestToSocketIdMap.delete(data.clientRequestId);
+      // streamIdToClientRequestMap.delete(streamIdFromClient);
     }
   });
 
