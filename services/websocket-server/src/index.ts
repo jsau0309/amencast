@@ -51,6 +51,18 @@ const streamIdToClientRequestMap = new Map<string, string>();
 
 console.log('[WebSocketServer] Starting server setup...');
 
+// At the top of your file or a config section
+const SAMPLE_RATE = 16000;
+const BYTES_PER_SAMPLE = 2; // 16-bit
+const CHANNELS = 1;
+const CHUNK_DURATION_SECONDS = 1.5;
+const OVERLAP_DURATION_SECONDS = 0.5;
+
+const BYTES_PER_SECOND = SAMPLE_RATE * BYTES_PER_SAMPLE * CHANNELS;
+const CHUNK_SIZE_BYTES = Math.floor(BYTES_PER_SECOND * CHUNK_DURATION_SECONDS); // 48000
+const OVERLAP_BYTES = Math.floor(BYTES_PER_SECOND * OVERLAP_DURATION_SECONDS);   // 16000
+const STRIDE_BYTES = CHUNK_SIZE_BYTES - OVERLAP_BYTES;                         // 32000 (1 second of new audio)
+
 /**
  * Extracts the YouTube video ID from a given YouTube URL.
  *
@@ -165,31 +177,83 @@ async function listenForResults() {
   }
 }
 
-app.post('/mock/internal/audio-stream/:streamId', (req, res) => {
+// Renamed route and prepared for new logic
+app.post('/internal/audio-stream/:streamId', (req: express.Request, res: express.Response) => {
   const streamId = req.params.streamId;
-  let totalBytesReceived = 0;
-  console.log(`[WebSocketServer] MOCK /internal/audio-stream/${streamId}: Connection received.`);
+  console.log(`[WebSocketServer] /internal/audio-stream/${streamId}: Connection received for real-time processing.`);
+
+  let masterBuffer = Buffer.alloc(0); // Buffer to accumulate all incoming audio data
+  let totalBytesProcessedForChunks = 0;
 
   req.on('data', (chunk: Buffer) => {
-    totalBytesReceived += chunk.length;
-    console.log(`[WebSocketServer] MOCK /internal/audio-stream/${streamId}: Received chunk: ${chunk.length} bytes. Total: ${totalBytesReceived} bytes.`);
+    masterBuffer = Buffer.concat([masterBuffer, chunk]);
+    console.log(`[WebSocketServer] /internal/audio-stream/${streamId}: Received chunk: ${chunk.length} bytes. Master buffer size: ${masterBuffer.length}`);
+
+    // Process as many full strides as possible from the masterBuffer
+    while (masterBuffer.length >= totalBytesProcessedForChunks + CHUNK_SIZE_BYTES) {
+      // We need enough data in masterBuffer that starts from where we last processed (totalBytesProcessedForChunks)
+      // and extends for a full CHUNK_SIZE_BYTES.
+      // The starting point for our next chunk is totalBytesProcessedForChunks.
+      const chunkToPublish = masterBuffer.subarray(
+        totalBytesProcessedForChunks,
+        totalBytesProcessedForChunks + CHUNK_SIZE_BYTES
+      );
+
+      if (chunkToPublish.length === CHUNK_SIZE_BYTES) {
+        // TODO: Publish chunkToPublish to Redis Pub/Sub: audio_chunks:<streamId>
+        publisherRedis.publish(`audio_chunks:${streamId}`, chunkToPublish)
+          .then(() => {
+            console.log(`[WebSocketServer] /internal/audio-stream/${streamId}: Published ${chunkToPublish.length}B chunk. Offset: ${totalBytesProcessedForChunks / BYTES_PER_SECOND}s`);
+          })
+          .catch(err => {
+            console.error(`[WebSocketServer] /internal/audio-stream/${streamId}: Error publishing chunk to Redis:`, err);
+          });
+        
+        totalBytesProcessedForChunks += STRIDE_BYTES; // Advance by one stride
+      } else {
+        // This should ideally not happen if logic is correct and CHUNK_SIZE_BYTES is a multiple of sample frame size
+        console.warn(`[WebSocketServer] /internal/audio-stream/${streamId}: Tried to publish a partial chunk of size ${chunkToPublish.length}B. This indicates an issue.`);
+        break; // Avoid infinite loop on partial chunk
+      }
+    }
   });
 
   req.on('end', () => {
-    console.log(`[WebSocketServer] MOCK /internal/audio-stream/${streamId}: Stream ended. Total bytes received: ${totalBytesReceived}`);
-    res.status(200).send('Stream received by mock endpoint.');
+    console.log(`[WebSocketServer] /internal/audio-stream/${streamId}: Incoming stream ended. Master buffer size: ${masterBuffer.length}`);
+    // Process any remaining data in masterBuffer that might form a final partial or full chunk
+    // This part needs careful handling for the very last chunk if it's smaller than CHUNK_SIZE_BYTES
+    // For now, our loop handles full chunks. A final partial chunk might be padded or handled differently.
+    // Current logic will only process full chunks. If masterBuffer.length < totalBytesProcessedForChunks + CHUNK_SIZE_BYTES
+    // but masterBuffer.length > totalBytesProcessedForChunks, this remaining part is not processed into a chunk.
+
+    // Consider if the last segment needs padding to CHUNK_SIZE_BYTES or special handling.
+    // For simplicity in this step, we only publish full 1.5s chunks.
+    // A more advanced version might pad the last chunk or send it as-is with its actual length.
+
+    // Clean up any remaining part of the buffer that wasn't processed into full strides
+    if (totalBytesProcessedForChunks > 0 && masterBuffer.length > totalBytesProcessedForChunks) {
+        masterBuffer = masterBuffer.subarray(totalBytesProcessedForChunks);
+    } else if (totalBytesProcessedForChunks === 0) {
+        // masterBuffer might still contain data if no full chunk was ever formed
+    } else {
+        masterBuffer = Buffer.alloc(0); // All processed
+    }
+    console.log(`[WebSocketServer] /internal/audio-stream/${streamId}: Remaining in masterBuffer after stream end: ${masterBuffer.length} bytes.`);
+
+
+    res.status(200).send('Audio stream processing finished.');
   });
 
   req.on('error', (err) => {
-    console.error(`[WebSocketServer] MOCK /internal/audio-stream/${streamId}: Error on request stream:`, err);
+    console.error(`[WebSocketServer] /internal/audio-stream/${streamId}: Error on request stream:`, err);
     if (!res.headersSent) {
       res.status(500).send('Error receiving stream.');
     }
   });
 
-  // Optional: Handle client disconnects if the sender closes the connection prematurely
   req.on('close', () => {
-      console.log(`[WebSocketServer] MOCK /internal/audio-stream/${streamId}: Connection closed by client. Total bytes at close: ${totalBytesReceived}`);
+    console.log(`[WebSocketServer] /internal/audio-stream/${streamId}: Connection closed by client.`);
+    // Perform any necessary cleanup for this streamId if the connection drops prematurely
   });
 });
 

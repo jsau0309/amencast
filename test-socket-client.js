@@ -9,7 +9,7 @@ socket.on("connect", () => {
   console.log("TestClient: Connected to WebSocket server with ID:", socket.id);
 
   const testData = {
-    youtubeUrl: "https://www.youtube.com/watch?v=YG7juc3GXJo", // Use a known SHORT and PUBLIC video
+    youtubeUrl: "https://www.youtube.com/shorts/Yjs-YTIiGHE",
     targetLanguage: "es",
     clientRequestId: `clientReq-${Date.now()}`, // Unique ID
     streamId: `stream-${Date.now()}`,         // Unique ID

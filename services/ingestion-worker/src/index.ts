@@ -461,7 +461,7 @@ async function main() {
       const pcmAudioStream = streamAndTranscodeAudioSpawn(fetchedAudioUrl, streamId);
       const websocketServerHost = process.env.WEBSOCKET_SERVER_HOST || 'localhost';
       const websocketServerPort = parseInt(process.env.WEBSOCKET_SERVER_PORT || '3001', 10);
-      const targetPath = `/mock/internal/audio-stream/${streamId}`;
+      const targetPath = `/internal/audio-stream/${streamId}`; // Removed /mock
       const options: http.RequestOptions = {
         hostname: websocketServerHost,
         port: websocketServerPort,
