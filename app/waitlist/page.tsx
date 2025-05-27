@@ -12,7 +12,7 @@ export default function WaitlistPage() {
         <LanguageToggle />
       </header>
       <main className="flex-1 flex flex-col items-center pt-16">
-        <div className="w-full max-w-md space-y-10">
+        <div className="w-full max-w-md space-y-10 px-4">
           {/* Custom title and subtitle from the screenshot */}
           <div className="space-y-2 text-center">
             <h1 className="text-3xl font-bold">Join the Waitlist</h1>
