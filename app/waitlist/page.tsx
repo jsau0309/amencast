@@ -1,7 +1,6 @@
 "use client"
 
 import { Logo } from "@/components/logo"
-import { LanguageToggle } from "@/components/language-toggle"
 import { Waitlist } from '@clerk/nextjs'; // Import Clerk Waitlist component
 
 export default function WaitlistPage() {
@@ -9,7 +8,6 @@ export default function WaitlistPage() {
     <div className="flex min-h-screen flex-col">
       <header className="container flex items-center justify-between py-5">
         <Logo />
-        <LanguageToggle />
       </header>
       <main className="flex-1 flex flex-col items-center pt-16">
         <div className="w-full max-w-md space-y-10 px-4">

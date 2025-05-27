@@ -1,6 +1,5 @@
 import Link from "next/link"
 import { Button } from "@/components/ui/button"
-import { LanguageToggle } from "@/components/language-toggle"
 import { Logo } from "@/components/logo"
 import { Globe } from "@/components/ui/globe"
 import { ShootingStars } from "@/components/ui/shooting-stars"
@@ -14,7 +13,6 @@ export default function LandingPage() {
           <Button asChild variant="ghost" size="sm">
             <Link href="/signin">Sign In</Link>
           </Button>
-          <LanguageToggle />
         </div>
       </header>
 
