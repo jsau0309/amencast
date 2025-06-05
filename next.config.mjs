@@ -17,6 +17,12 @@ const nextConfig = {
     //   "logos-world.net",
     // ],
   },
-}
+  transpilePackages: [
+    '@clerk/nextjs',
+    '@clerk/clerk-react',
+    '@clerk/shared'
+  ],
+  // experimental block is removed as it's now empty after moving transpilePackages
+};
 
-export default nextConfig
+export default nextConfig;

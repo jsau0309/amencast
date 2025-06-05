@@ -18,7 +18,7 @@
     "services/*"
   ],
   "dependencies": {
-    "@clerk/nextjs": "^6.19.2",
+    "@clerk/nextjs": "^6.21.0",
     "@hookform/resolvers": "^3.9.1",
     "@livekit/rtc-node": "^0.13.13",
     "@prisma/client": "^6.7.0",

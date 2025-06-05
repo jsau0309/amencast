@@ -1,27 +1,41 @@
-"use client"
+import type { Metadata } from 'next';
+import WaitlistContent from './waitlist-content'; // Import the new client component
 
-import { Logo } from "@/components/logo"
-import { Waitlist } from '@clerk/nextjs'; // Import Clerk Waitlist component
+// metadata object remains here
+export const metadata: Metadata = {
+  title: "Join the AmenCast Waitlist | Real-Time Church Translation",
+  description: "Be among the first to experience AmenCast — a platform that brings real-time audio translation to church livestreams. Break language barriers and make every sermon accessible.",
+  keywords: [
+    "church translation", "real-time translation", "Spanish church livestream", 
+    "AmenCast", "multilingual worship", "church tech", "audio dubbing", "church accessibility"
+  ],
+  metadataBase: new URL("https://www.amencast.tech"),
+  generator: "v0.dev",
+  openGraph: {
+    title: "Join the AmenCast Waitlist",
+    description: "Experience real-time sermon translation with AmenCast. Make church services accessible to all languages.",
+    url: "https://www.amencast.tech/waitlist",
+    siteName: "AmenCast",
+    images: [
+      {
+        url: "/amencast-org-image.png", 
+        width: 1200,
+        height: 630,
+        alt: "AmenCast Waitlist Promotion",
+      },
+    ],
+    locale: "en_US",
+    type: "website",
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "AmenCast | Real-Time Church Translation",
+    description: "Join our waitlist and help make worship accessible in every language.",
+    images: ["/amencast-org-image.png"],
+  },
+};
 
+// This is now a Server Component that renders the Client Component
 export default function WaitlistPage() {
-  return (
-    <div className="flex min-h-screen flex-col">
-      <header className="container flex items-center justify-between py-5">
-        <Logo />
-      </header>
-      <main className="flex-1 flex flex-col items-center pt-16">
-        <div className="w-full max-w-md space-y-10 px-4">
-          {/* Custom title and subtitle from the screenshot */}
-          <div className="space-y-2 text-center">
-            <h1 className="text-3xl font-bold">Join the Waitlist</h1>
-            <p className="text-muted-foreground">
-              Be among the first 100 users to experience real-time translation for church livestreams
-            </p>
-          </div>
-          {/* Render the Clerk Waitlist component */}
-          <Waitlist />
-        </div>
-      </main>
-    </div>
-  )
+  return <WaitlistContent />;
 }
