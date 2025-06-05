@@ -7,8 +7,8 @@ import { ClerkProvider } from '@clerk/nextjs';
 import { Toaster } from "@/components/ui/sonner"; 
 
 export const metadata: Metadata = {
-  title: "AmenCast | Real-Time Spanish Translation for Church Livestreams",
-  description: "Listen to any YouTube-hosted church livestream in real-time Spanish with minimal delay.",
+  title: "AmenCast | Real-Time Translation for Church Livestreams",
+  description: "Listen to any church livestream in real-time in any language with minimal delay.",
   generator: 'v0.dev',
   icons: {
     icon: [
