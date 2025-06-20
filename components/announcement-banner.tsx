@@ -1,7 +1,7 @@
 "use client"
 
 export function AnnouncementBanner() {
-  const text = "Early access will be granted on Friday, June 13th 2025 🌎"
+  const text = "Early access will be granted on July, 1st 2025 🌎"
 
   return (
     <div className="bg-black text-white py-2 overflow-hidden relative">
