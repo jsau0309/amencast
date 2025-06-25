@@ -26,7 +26,10 @@ function getEnvVar(key: string, isSensitive: boolean = false): string {
 
 export const config = {
   redis: {
-    url: getEnvVar('UPSTASH_REDIS_URL', true),
+    host: getEnvVar('REDIS_HOST'),
+    port: parseInt(getEnvVar('REDIS_PORT'), 10),
+    password: process.env.REDIS_PASSWORD || undefined, // Password is optional
+    tlsEnabled: process.env.REDIS_TLS_ENABLED === 'true',
     inputQueueName: getEnvVar('INPUT_REDIS_QUEUE_NAME'),
     outputQueueName: getEnvVar('OUTPUT_REDIS_QUEUE_NAME'),
   },
@@ -48,8 +51,8 @@ export const config = {
 };
 
 // Basic validation
-if (!config.redis.url.startsWith('redis')) {
-    console.warn(`UPSTASH_REDIS_URL "${config.redis.url}" might be incorrect. Should start with redis:// or rediss://`);
+if (config.redis.port < 1024 || config.redis.port > 65535) {
+    console.warn(`REDIS_PORT "${config.redis.port}" might be incorrect. Should be within the valid port range.`);
 }
 if (config.worker.pollingIntervalMs < 1000) {
     console.warn('INGESTION_WORKER_POLLING_INTERVAL_MS is very low.');

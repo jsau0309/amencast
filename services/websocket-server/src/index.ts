@@ -21,6 +21,7 @@ const io = new SocketIOServer(server, {
 const redisOptions: RedisOptions = {
   host: config.redis.host,
   port: config.redis.port,
+  username: 'default',
   lazyConnect: true,
 };
 

@@ -44,90 +44,48 @@ let supabase: SupabaseClient | null = null; // Typed SupabaseClient
 
 let isShuttingDown = false;
 
-async function getYouTubeAudioUrl(youtubeUrl: string): Promise<string> {
-  console.log(`[IngestionWorker] Getting audio URL for: ${youtubeUrl}`);
-  return new Promise((resolve, reject) => {
-    const ytdlp = spawn('yt-dlp', [
-      '-f', 'bestaudio', // Get the best audio-only format
-      '--get-url',      // Instruct yt-dlp to output only the direct URL
-      youtubeUrl        // The YouTube video URL to process
-    ]);
+function streamYouTubeAudioAsPcm(youtubeUrl: string, streamId: string): Readable {
+  console.log(`[IngestionWorker] Starting yt-dlp and ffmpeg pipe for streamId ${streamId}. URL: ${youtubeUrl}`);
 
-    let audioUrl = '';
-    let errorOutput = '';
-
-    // Listen for data on stdout (this will be our URL)
-    ytdlp.stdout.on('data', (data) => {
-      audioUrl += data.toString();
-    });
-
-    // Listen for data on stderr (for errors or verbose output from yt-dlp)
-    ytdlp.stderr.on('data', (data) => {
-      const stderrChunk = data.toString();
-      errorOutput += stderrChunk;
-      // You might want to be selective about what from stderr is a true error vs. progress
-      console.log(`[IngestionWorker] yt-dlp stderr: ${stderrChunk.trim()}`);
-    });
-
-    // Handle process exit
-    ytdlp.on('close', (code) => {
-      const trimmedUrl = audioUrl.trim();
-      if (code === 0 && trimmedUrl && trimmedUrl.startsWith('http')) {
-        console.log(`[IngestionWorker] yt-dlp succeeded. Audio URL: ${trimmedUrl}`);
-        resolve(trimmedUrl);
-      } else {
-        const errorMessage = `yt-dlp process exited with code ${code}. Output: "${trimmedUrl}". Stderr: "${errorOutput.trim()}"`;
-        console.error(`[IngestionWorker] ${errorMessage}`);
-        reject(new Error(errorMessage));
-      }
-    });
-
-    // Handle errors in spawning the process itself
-    ytdlp.on('error', (err) => {
-      console.error('[IngestionWorker] Failed to start yt-dlp process:', err);
-      reject(err);
-    });
-  });
-}
-
-function streamAndTranscodeAudioSpawn(audioStreamUrl: string, streamId: string): Readable {
-  console.log(`[IngestionWorker] Starting ffmpeg (spawn) for streamId ${streamId}. URL: ${audioStreamUrl.substring(0, 100)}...`);
-  const ffmpegProcess = spawn('ffmpeg', [
-    '-i', audioStreamUrl,    // Input from the URL yt-dlp provided
-    '-f', 's16le',           // Output format: signed 16-bit PCM, little-endian
-    '-ar', '16000',          // Output sample rate: 16000 Hz
-    '-ac', '1',              // Output audio channels: 1 (mono)
-    '-'                      // Output to stdout
+  // Spawn yt-dlp to download and pipe to stdout
+  const ytdlp = spawn('yt-dlp', [
+    youtubeUrl,
+    '-f', 'bestaudio', // Get the best audio-only format
+    '-o', '-'          // Output to stdout
   ]);
 
-  // Optional: Log stderr from ffmpeg for debugging
-  // ffmpeg often outputs progress/info to stderr.
-  ffmpegProcess.stderr.on('data', (data) => {
-    console.log(`[IngestionWorker] ffmpeg stderr for ${streamId}: ${data.toString().trim()}`);
+  // Spawn ffmpeg to transcode from stdin
+  const ffmpeg = spawn('ffmpeg', [
+    '-i', 'pipe:0',    // Input from stdin
+    '-f', 's16le',     // Output format: signed 16-bit PCM, little-endian
+    '-ar', '16000',    // Output sample rate: 16000 Hz
+    '-ac', '1',        // Output audio channels: 1 (mono)
+    '-'                // Output to stdout
+  ]);
+
+  // Pipe yt-dlp's output directly to ffmpeg's input
+  ytdlp.stdout.pipe(ffmpeg.stdin);
+
+  // Log errors from both processes for debugging
+  ytdlp.stderr.on('data', (data) => {
+    console.log(`[IngestionWorker] yt-dlp stderr for ${streamId}: ${data.toString()}`);
   });
 
-  ffmpegProcess.on('error', (err) => {
-    // This event is for errors in spawning the process itself (e.g., ffmpeg not found)
-    console.error(`[IngestionWorker] Failed to start ffmpeg process for ${streamId}:`, err);
-    // It's crucial to destroy the stdout stream to signal the error to consumers
-    ffmpegProcess.stdout.destroy(err);
-  });
-  
-  ffmpegProcess.on('close', (code) => {
-    console.log(`[IngestionWorker] ffmpeg process for ${streamId} exited with code ${code}`);
-    if (code !== 0) {
-      // If ffmpeg exits with an error code, emit an error on its stdout stream
-      // so that any pipes listening to it are aware.
-      const errMsg = `ffmpeg process for ${streamId} exited with error code ${code}.`;
-      console.error(`[IngestionWorker] ${errMsg}`);
-      // ffmpegProcess.stdout.destroy(new Error(errMsg)); // Use destroy if stream hasn't ended
-    }
-    // If code is 0, the stdout stream would have ended naturally when ffmpeg finished.
-    // If code is non-zero, and stdout hasn't ended, an error should have been emitted.
+  ffmpeg.stderr.on('data', (data) => {
+    console.log(`[IngestionWorker] ffmpeg stderr for ${streamId}: ${data.toString()}`);
   });
 
-  // The stdout of the ffmpeg process is our raw PCM audio stream
-  return ffmpegProcess.stdout;
+  // Handle errors during process spawning
+  ytdlp.on('error', (err) => {
+    console.error(`[IngestionWorker] Failed to start yt-dlp process for ${streamId}:`, err);
+    ffmpeg.stdout.destroy(err);
+  });
+  ffmpeg.on('error', (err) => {
+      console.error(`[IngestionWorker] Failed to start ffmpeg process for ${streamId}:`, err);
+      ffmpeg.stdout.destroy(err);
+  });
+
+  return ffmpeg.stdout;
 }
 
 /**
@@ -140,7 +98,12 @@ function streamAndTranscodeAudioSpawn(audioStreamUrl: string, streamId: string):
 function getInputRedisClient(): Redis {
   if (!inputRedisClient) {
     console.log('[IngestionWorker] Initializing Input Redis client...');
-    inputRedisClient = new Redis(config.redis.url, {
+    inputRedisClient = new Redis({
+      host: config.redis.host,
+      port: config.redis.port,
+      username: 'default',
+      password: config.redis.password,
+      tls: config.redis.tlsEnabled ? {} : undefined,
       maxRetriesPerRequest: 3,
       keepAlive: 1000 * 60,
       connectTimeout: 10000, // 10 seconds
@@ -167,7 +130,12 @@ function getOutputRedisClient(): Redis {
   // For now, assuming they could be different or managed separately for clarity.
   if (!outputRedisClient) {
     console.log('[IngestionWorker] Initializing Output Redis client...');
-    outputRedisClient = new Redis(config.redis.url, {
+    outputRedisClient = new Redis({
+      host: config.redis.host,
+      port: config.redis.port,
+      username: 'default',
+      password: config.redis.password,
+      tls: config.redis.tlsEnabled ? {} : undefined,
       maxRetriesPerRequest: 3,
       keepAlive: 1000 * 60,
       connectTimeout: 10000,
@@ -456,9 +424,8 @@ async function main() {
     console.log(`[IngestionWorker] /initiate-stream-processing: Received request for streamId: ${streamId}, url: ${youtubeUrl}`);
 
     try {
-      const fetchedAudioUrl = await getYouTubeAudioUrl(youtubeUrl);
-      console.log(`[IngestionWorker] /initiate-stream-processing: Got audio URL for ${streamId}: ${fetchedAudioUrl.substring(0, 100)}...`);
-      const pcmAudioStream = streamAndTranscodeAudioSpawn(fetchedAudioUrl, streamId);
+      const pcmAudioStream = streamYouTubeAudioAsPcm(youtubeUrl, streamId);
+
       const websocketServerHost = process.env.WEBSOCKET_SERVER_HOST || 'localhost';
       const websocketServerPort = parseInt(process.env.WEBSOCKET_SERVER_PORT || '3001', 10);
       const targetPath = `/internal/audio-stream/${streamId}`; // Removed /mock
