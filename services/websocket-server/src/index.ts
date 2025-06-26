@@ -299,6 +299,17 @@ io.on('connection', (socket: Socket) => {
     }
 
     try {
+      // --- START: New logic for Phase 3 ---
+      // Publish a "start" command to the control channel for the gpu-worker
+      const controlCommand = {
+        action: 'start',
+        streamId: streamIdFromClient,
+        targetLanguage: data.targetLanguage,
+      };
+      await publisherRedis.publish('stream_control', JSON.stringify(controlCommand));
+      console.log(`[WebSocketServer] Published START command for stream ${streamIdFromClient} to stream_control channel.`);
+      // --- END: New logic for Phase 3 ---
+
       const ingestionWorkerHost = process.env.INGESTION_WORKER_INTERNAL_HOST || 'localhost'; // Use env vars for config
       const ingestionWorkerPort = process.env.INGESTION_WORKER_INTERNAL_PORT || 3002;
       const ingestionEndpoint = `http://${ingestionWorkerHost}:${ingestionWorkerPort}/initiate-stream-processing`;
@@ -343,8 +354,8 @@ io.on('connection', (socket: Socket) => {
         message: detailMessage
       });
       // Consider if you need to clean up maps if the initiation fails here
-      // clientRequestToSocketIdMap.delete(data.clientRequestId);
-      // streamIdToClientRequestMap.delete(streamIdFromClient);
+      clientRequestToSocketIdMap.delete(data.clientRequestId);
+      streamIdToClientRequestMap.delete(streamIdFromClient);
     }
   });
 

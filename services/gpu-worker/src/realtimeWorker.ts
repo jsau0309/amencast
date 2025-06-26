@@ -10,6 +10,15 @@ import { v4 as uuidv4 } from 'uuid';
 
 console.log('[RealtimeWorker] Starting up...');
 
+// Define interfaces for our job context
+interface JobContext {
+    streamId: string;
+    targetLanguage: string;
+}
+
+// In-memory store for active job contexts.
+const activeJobs = new Map<string, JobContext>();
+
 // Initialize Redis clients
 const redisOptions: RedisOptions = {
   host: config.redis.host,
@@ -21,6 +30,8 @@ if (config.redis.password) redisOptions.password = config.redis.password;
 if (config.redis.tlsEnabled) redisOptions.tls = {};
 
 const subscriber = new Redis(redisOptions);
+const publisher = new Redis(redisOptions); // For Phase 4
+const controlSubscriber = new Redis(redisOptions); // For handling start/stop commands
 
 // Initialize API clients
 if (!config.openai.apiKey) {
@@ -76,6 +87,12 @@ async function handleAudioChunk(channel: string, message: Buffer) {
         return;
     }
 
+    const job = activeJobs.get(streamId);
+    if (!job) {
+        console.warn(`[RealtimeWorker] [${streamId}] No active job context found. Ignoring chunk.`);
+        return;
+    }
+
     console.log(`[RealtimeWorker] [${streamId}] Received ${message.length} byte chunk for processing.`);
     
     // Define tempFilePath outside the try block to ensure it's accessible in finally
@@ -105,8 +122,26 @@ async function handleAudioChunk(channel: string, message: Buffer) {
             return;
         }
 
-        // Placeholder for Phase 3 (Translation)
-        // await handleTranslation(streamId, sourceText);
+        // --- Phase 3: Translation ---
+        console.log(`[RealtimeWorker] [${streamId}] Translating to ${job.targetLanguage}...`);
+        const translationResponse = await openai.chat.completions.create({
+            model: 'gpt-3.5-turbo',
+            messages: [
+                { role: 'system', content: `You are an expert translator. Translate the following text accurately into ${job.targetLanguage}.` },
+                { role: 'user', content: sourceText }
+            ],
+            temperature: 0.3,
+        });
+
+        const translatedText = translationResponse.choices[0]?.message?.content?.trim();
+        if (!translatedText) {
+            console.warn(`[RealtimeWorker] [${streamId}] Translation returned empty text.`);
+            return;
+        }
+        console.log(`[RealtimeWorker] [${streamId}] Translation Result: "${translatedText}"`);
+
+        // Placeholder for Phase 4 (TTS)
+        // await handleTTS(streamId, translatedText);
 
     } catch (error) {
         console.error(`[RealtimeWorker] [${streamId}] Error during STT processing:`, error);
@@ -134,13 +169,42 @@ async function listenForAudioChunks() {
     });
 }
 
+async function listenForControlMessages() {
+    await controlSubscriber.subscribe('stream_control');
+    console.log('[RealtimeWorker] Subscribed to stream_control channel.');
+
+    controlSubscriber.on('message', (channel, message) => {
+        if (channel !== 'stream_control') return;
+
+        try {
+            const command = JSON.parse(message);
+            if (command.action === 'start' && command.streamId && command.targetLanguage) {
+                console.log(`[RealtimeWorker] Received START command for stream ${command.streamId} -> ${command.targetLanguage}`);
+                activeJobs.set(command.streamId, {
+                    streamId: command.streamId,
+                    targetLanguage: command.targetLanguage,
+                });
+            } else if (command.action === 'stop' && command.streamId) {
+                console.log(`[RealtimeWorker] Received STOP command for stream ${command.streamId}`);
+                activeJobs.delete(command.streamId);
+            }
+        } catch (error) {
+            console.error('[RealtimeWorker] Could not parse control message:', message, error);
+        }
+    });
+}
+
 function signalShutdownHandler() {
     if (isShuttingDown) return;
     console.log('[RealtimeWorker] Shutdown signal received.');
     isShuttingDown = true;
     
-    subscriber.quit().then(() => {
-        console.log('[RealtimeWorker] Redis subscriber disconnected. Shutdown complete.');
+    Promise.all([
+        subscriber.quit(),
+        publisher.quit(),
+        controlSubscriber.quit(),
+    ]).then(() => {
+        console.log('[RealtimeWorker] Redis clients disconnected. Shutdown complete.');
         process.exit(0);
     }).catch(err => {
         console.error('[RealtimeWorker] Error during Redis disconnection:', err);
@@ -155,10 +219,15 @@ function signalShutdownHandler() {
 
 async function main() {
     try {
-        await subscriber.connect();
-        console.log('[RealtimeWorker] Redis subscriber connected.');
+        await Promise.all([
+            subscriber.connect(),
+            publisher.connect(),
+            controlSubscriber.connect()
+        ]);
+        console.log('[RealtimeWorker] All Redis clients connected.');
 
         await listenForAudioChunks();
+        await listenForControlMessages();
 
         console.log('[RealtimeWorker] Worker is running and listening for jobs.');
 
