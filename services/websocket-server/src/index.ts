@@ -36,6 +36,7 @@ if (config.redis.tlsEnabled) {
 // Initialize Redis clients with the options object
 const publisherRedis = new Redis(redisOptions);
 const subscriberRedis = new Redis(redisOptions); // Dedicated client for blocking BRPOP
+const audioSubscriberRedis = new Redis(redisOptions); // New client for Pub/Sub
 
 console.log('[WebSocketServer] Initializing Redis clients...');
 
@@ -44,6 +45,9 @@ publisherRedis.on('error', (err) => console.error('[WebSocketServer] Publisher R
 
 subscriberRedis.on('connect', () => console.log('[WebSocketServer] Subscriber Redis connected (for results).'));
 subscriberRedis.on('error', (err) => console.error('[WebSocketServer] Subscriber Redis error (for results):', err));
+
+audioSubscriberRedis.on('connect', () => console.log('[WebSocketServer] Audio Subscriber Redis connected.'));
+audioSubscriberRedis.on('error', (err) => console.error('[WebSocketServer] Audio Subscriber Redis error:', err));
 
 // In-memory stores for simplicity in local development.
 // For production, consider a shared store like Redis if scaling to multiple server instances.
@@ -176,6 +180,45 @@ async function listenForResults() {
     console.error('[WebSocketServer] CRITICAL: Failed to connect subscriberRedis for results listener. Results will not be processed.', initialConnectError);
     // Potentially try to restart this listener after a delay
   }
+}
+
+/**
+ * Listens for real-time translated audio chunks on Redis Pub/Sub and relays them to the correct client.
+ */
+async function listenForTranslatedAudio() {
+    console.log(`[WebSocketServer] Translated audio listener starting. Subscribing to 'translated_audio:*'...`);
+    try {
+        if (audioSubscriberRedis.status !== 'ready') {
+            await audioSubscriberRedis.connect();
+        }
+        await audioSubscriberRedis.psubscribe('translated_audio:*');
+
+        audioSubscriberRedis.on('pmessageBuffer', (pattern, channelBuffer, messageBuffer) => {
+            const channel = channelBuffer.toString();
+            const streamId = channel.split(':')[1];
+            
+            if (!streamId) return;
+
+            const clientRequestId = streamIdToClientRequestMap.get(streamId);
+            if (!clientRequestId) {
+                // This can happen if the client disconnected. It's not necessarily an error.
+                // console.warn(`[WebSocketServer] No clientRequestId found for streamId ${streamId} in audio relay.`);
+                return;
+            }
+
+            const socketId = clientRequestToSocketIdMap.get(clientRequestId);
+            if (socketId) {
+                const targetSocket = io.sockets.sockets.get(socketId);
+                if (targetSocket) {
+                    targetSocket.emit('translated_audio_chunk', messageBuffer);
+                    // This log can be very noisy, disable it unless debugging.
+                    // console.log(`[WebSocketServer] Relayed audio chunk (${messageBuffer.length} bytes) to socket ${socketId} for streamId ${streamId}`);
+                }
+            }
+        });
+    } catch (error) {
+        console.error('[WebSocketServer] CRITICAL: Failed to subscribe for translated audio. Real-time audio will not be relayed.', error);
+    }
 }
 
 // Renamed route and prepared for new logic
@@ -388,10 +431,15 @@ Promise.all([
   }),
   // Do not connect subscriberRedis here if it's explicitly connected in listenForResults
   // It's better to connect it just before its blocking loop starts.
+  audioSubscriberRedis.connect().catch(err => {
+    console.error('[WebSocketServer] Failed to connect audioSubscriberRedis:', err);
+    // This might not be critical to stop the server, but real-time audio won't work.
+  })
 ]).then(() => {
   server.listen(config.port, () => {
     console.log(`[WebSocketServer] Express server with Socket.IO listening on http://localhost:${config.port}`);
     listenForResults(); // Start the results listener after server starts and publisher is connected
+    listenForTranslatedAudio(); // Start the real-time audio listener
   });
 }).catch(err => {
   console.error('[WebSocketServer] Critical error during publisher Redis connection or server start. Server not started.', err);

@@ -7,6 +7,7 @@ import fsp from 'fs/promises';
 import path from 'path';
 import os from 'os';
 import { v4 as uuidv4 } from 'uuid';
+import { CartesiaClient } from '@cartesia/cartesia-js';
 
 console.log('[RealtimeWorker] Starting up...');
 
@@ -14,6 +15,10 @@ console.log('[RealtimeWorker] Starting up...');
 interface JobContext {
     streamId: string;
     targetLanguage: string;
+    ttsSocket: any; 
+    ttsContextId: string; 
+    isFirstChunk: boolean;
+    ttsResponse: any; // To store the response object from the first .send() call
 }
 
 // In-memory store for active job contexts.
@@ -30,14 +35,27 @@ if (config.redis.password) redisOptions.password = config.redis.password;
 if (config.redis.tlsEnabled) redisOptions.tls = {};
 
 const subscriber = new Redis(redisOptions);
-const publisher = new Redis(redisOptions); // For Phase 4
-const controlSubscriber = new Redis(redisOptions); // For handling start/stop commands
+const publisher = new Redis(redisOptions);
+const controlSubscriber = new Redis(redisOptions);
 
 // Initialize API clients
 if (!config.openai.apiKey) {
     throw new Error("OPENAI_API_KEY is not set. The worker cannot start.");
 }
 const openai = new OpenAI({ apiKey: config.openai.apiKey });
+
+if (!process.env.CARTESIA_API_KEY) {
+    throw new Error("CARTESIA_API_KEY is not set. The worker cannot start.");
+}
+const cartesia = new CartesiaClient({ 
+    apiKey: process.env.CARTESIA_API_KEY,
+    cartesiaVersion: "2024-06-10"
+});
+
+if (!process.env.CARTESIA_VOICE_ID) {
+    throw new Error("CARTESIA_VOICE_ID is not set. The worker cannot start.");
+}
+const voiceId = process.env.CARTESIA_VOICE_ID;
 
 let isShuttingDown = false;
 
@@ -80,50 +98,42 @@ function createWavHeader(dataLength: number): Buffer {
     return header;
 }
 
+// Function to pre-process text for Cartesia TTS according to best practices
+function preprocessTextForTTS(text: string): string {
+    return text.replace(/"/g, ' ');
+}
+
 async function handleAudioChunk(channel: string, message: Buffer) {
     const streamId = channel.split(':')[1];
-    if (!streamId) {
-        console.error(`[RealtimeWorker] Received chunk on invalid channel: ${channel}`);
-        return;
-    }
+    if (!streamId) return; // Guard against invalid channel names
 
     const job = activeJobs.get(streamId);
+
     if (!job) {
-        console.warn(`[RealtimeWorker] [${streamId}] No active job context found. Ignoring chunk.`);
-        return;
+        return; 
     }
 
     console.log(`[RealtimeWorker] [${streamId}] Received ${message.length} byte chunk for processing.`);
     
-    // Define tempFilePath outside the try block to ensure it's accessible in finally
     const tempFilePath = path.join(os.tmpdir(), `amencast-audio-chunk-${uuidv4()}.wav`);
 
     try {
-        // Create a full WAV file in memory by prepending the header
         const wavHeader = createWavHeader(message.length);
         const wavBuffer = Buffer.concat([wavHeader, message]);
-
-        // Write buffer to a temporary file
         await fsp.writeFile(tempFilePath, wavBuffer);
 
-        // Phase 2: Speech-to-Text (STT) with Whisper
         const transcription = await openai.audio.transcriptions.create({
             file: fs.createReadStream(tempFilePath),
             model: 'whisper-1',
         });
 
         const sourceText = transcription.text;
-
-        // Log the result for our testing gate
-        console.log(`[RealtimeWorker] [${streamId}] STT Result: "${sourceText}"`);
-
         if (!sourceText.trim()) {
-            console.log(`[RealtimeWorker] [${streamId}] Whisper returned empty text. No further action.`);
+            console.log(`[RealtimeWorker] [${streamId}] Whisper returned empty text.`);
             return;
         }
+        console.log(`[RealtimeWorker] [${streamId}] STT Result: "${sourceText}"`);
 
-        // --- Phase 3: Translation ---
-        console.log(`[RealtimeWorker] [${streamId}] Translating to ${job.targetLanguage}...`);
         const translationResponse = await openai.chat.completions.create({
             model: 'gpt-3.5-turbo',
             messages: [
@@ -140,13 +150,58 @@ async function handleAudioChunk(channel: string, message: Buffer) {
         }
         console.log(`[RealtimeWorker] [${streamId}] Translation Result: "${translatedText}"`);
 
-        // Placeholder for Phase 4 (TTS)
-        // await handleTTS(streamId, translatedText);
+        const processedText = preprocessTextForTTS(translatedText);
+        
+        console.log(`[RealtimeWorker] [${streamId}] Sending text to Cartesia WebSocket...`);
 
+        if (job.isFirstChunk) {
+            job.isFirstChunk = false; 
+            const response = await job.ttsSocket.send({
+                modelId: "sonic-2",
+                transcript: processedText,
+                voice: { mode: "id", id: voiceId },
+                language: job.targetLanguage,
+                contextId: job.ttsContextId,
+                outputFormat: { container: "raw", encoding: "pcm_f32le", sampleRate: 16000 },
+                continue: true,
+            });
+            job.ttsResponse = response; 
+
+            // This loop runs in the background for the duration of the stream
+            (async () => {
+                try {
+                    for await (const msg of job.ttsResponse.events("message")) {
+                        const chunk = JSON.parse(msg as string);
+                        if (chunk.type === "chunk" && chunk.data) {
+                            const audioBuffer = Buffer.from(chunk.data, 'base64');
+                            if (audioBuffer.length > 0) {
+                                const translatedAudioChannel = `translated_audio:${streamId}`;
+                                console.log(`[RealtimeWorker] [${streamId}] Publishing ${audioBuffer.length} bytes of translated audio.`);
+                                await publisher.publish(translatedAudioChannel, audioBuffer);
+                            }
+                        }
+                    }
+                } catch (error) {
+                    console.error(`[RealtimeWorker] [${streamId}] Cartesia WebSocket error:`, error);
+                    // Avoid deleting the job here, as it might still be processing other chunks.
+                }
+            })();
+        } else {
+            // Per the SDK README, the .continue() method requires the full context.
+            await job.ttsSocket.continue({
+                contextId: job.ttsContextId,
+                transcript: processedText,
+                modelId: "sonic-2",
+                voice: { mode: "id", id: voiceId },
+                language: job.targetLanguage,
+                outputFormat: { container: "raw", encoding: "pcm_f32le", sampleRate: 16000 },
+                continue: true,
+            });
+        }
+        
     } catch (error) {
-        console.error(`[RealtimeWorker] [${streamId}] Error during STT processing:`, error);
+        console.error(`[RealtimeWorker] [${streamId}] Error during processing:`, error);
     } finally {
-        // Clean up the temporary file
         try {
             await fsp.unlink(tempFilePath);
         } catch (cleanupError) {
@@ -173,20 +228,46 @@ async function listenForControlMessages() {
     await controlSubscriber.subscribe('stream_control');
     console.log('[RealtimeWorker] Subscribed to stream_control channel.');
 
-    controlSubscriber.on('message', (channel, message) => {
+    controlSubscriber.on('message', async (channel, message) => {
         if (channel !== 'stream_control') return;
 
         try {
             const command = JSON.parse(message);
-            if (command.action === 'start' && command.streamId && command.targetLanguage) {
-                console.log(`[RealtimeWorker] Received START command for stream ${command.streamId} -> ${command.targetLanguage}`);
-                activeJobs.set(command.streamId, {
-                    streamId: command.streamId,
+            const streamId = command.streamId;
+
+            if (command.action === 'start' && streamId && command.targetLanguage) {
+                if (activeJobs.has(streamId)) {
+                    console.warn(`[RealtimeWorker] Received duplicate START command for stream ${streamId}. Ignoring.`);
+                    return;
+                }
+                console.log(`[RealtimeWorker] Received START command for stream ${streamId} -> ${command.targetLanguage}`);
+                
+                const ttsSocket = cartesia.tts.websocket(command.targetLanguage);
+                await ttsSocket.connect();
+                console.log(`[RealtimeWorker] [${streamId}] Cartesia WebSocket connected.`);
+                
+                const job: JobContext = {
+                    streamId: streamId,
                     targetLanguage: command.targetLanguage,
-                });
-            } else if (command.action === 'stop' && command.streamId) {
-                console.log(`[RealtimeWorker] Received STOP command for stream ${command.streamId}`);
-                activeJobs.delete(command.streamId);
+                    ttsSocket: ttsSocket,
+                    ttsContextId: uuidv4(),
+                    isFirstChunk: true,
+                    ttsResponse: null,
+                };
+                activeJobs.set(streamId, job);
+
+            } else if (command.action === 'stop' && streamId) {
+                console.log(`[RealtimeWorker] Received STOP command for stream ${streamId}`);
+                const job = activeJobs.get(streamId);
+                if (job && job.ttsSocket) {
+                    // Finalize the stream and disconnect
+                    if (!job.isFirstChunk && job.ttsResponse) {
+                        await job.ttsSocket.send({ contextId: job.ttsContextId, transcript: "", continue: false });
+                    }
+                    job.ttsSocket.disconnect();
+                    console.log(`[RealtimeWorker] [${streamId}] Cartesia WebSocket disconnected.`);
+                    activeJobs.delete(streamId);
+                }
             }
         } catch (error) {
             console.error('[RealtimeWorker] Could not parse control message:', message, error);

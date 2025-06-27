@@ -79,32 +79,29 @@ This document outlines a detailed, phased approach to implementing the real-time
 
 1.  **`gpu-worker`: Translate Transcribed Text**
     *   **Task:** Take the transcribed text (output from Whisper STT in Phase 2).
-    *   Send this text to a GPT model (GPT-3.5-turbo or GPT-4) via API call for translation into the target language (specified in the initial `Stream` record, `gpu-worker` might need to fetch this or have it passed along).
-    *   The prompt should be engineered for concise, chunk-level translation.
+    *   Listen for a `start` command on a `stream_control` channel to get the `targetLanguage`.
+    *   Dynamically construct a prompt and send the text to the GPT API for translation.
     *   Log the `streamId`, original transcribed text, and the translated text.
     *   **Testing:**
         *   Continue using the setup from Phase 2.
-        *   Monitor `gpu-worker` logs.
-        *   Verify that translated text appears in the logs alongside the original transcription.
-        *   Check the quality of the translation for short phrases/sentences.
-        *   Ensure the target language from the `Stream` record is respected.
+        *   Manually publish a `start` command to the `stream_control` channel.
+        *   Verify `gpu-worker` logs show the original transcription and the correct translated text.
 
-## Phase 4: `gpu-worker` - Text-to-Speech (ElevenLabs Flash v2.5 Streaming)
+## Phase 4: `gpu-worker` - Text-to-Speech (Cartesia Sonic Streaming)
 
-**Goal:** `gpu-worker` synthesizes audio from translated text using ElevenLabs streaming API and publishes it to Redis.
+**Goal:** `gpu-worker` synthesizes audio from translated text using Cartesia's streaming API with Continuations and publishes it to Redis.
 
-1.  **`gpu-worker`: TTS with ElevenLabs Streaming API**
-    *   **Task:** Take the translated text (output from GPT in Phase 3).
-    *   Use the ElevenLabs Flash v2.5 Streaming API to synthesize audio.
-    *   Handle the streaming audio output from ElevenLabs. This will likely involve receiving multiple small audio fragments for a single input text.
-    *   As audio fragments are received from ElevenLabs, publish them immediately to a new Redis Pub/Sub channel: `translated_audio:<streamId>`. The payload should be the raw audio bytes from ElevenLabs.
+1.  **`gpu-worker`: TTS with Cartesia Streaming API**
+    *   **Task 1 (Text Pre-processing):** Take the translated text (output from GPT in Phase 3) and run it through a pre-processing function to apply Cartesia's best practices (e.g., stripping quotes).
+    *   **Task 2 (Context Management):** For each `streamId`, create and manage a unique `context_id`. This is essential for using Cartesia's "Continuations" feature.
+    *   **Task 3 (Streaming Synthesis):** Use the Cartesia Streaming API to synthesize audio from the processed text, passing the `context_id` with each request to ensure seamless, natural-sounding audio.
+    *   **Task 4 (Publishing Fragments):** As audio fragments are received from Cartesia, publish them immediately to a new Redis Pub/Sub channel: `translated_audio:<streamId>`. The payload should be the raw audio bytes.
     *   Log `streamId` and confirmation of TTS audio chunks being published.
     *   **Testing:**
         *   Continue using the setup from Phase 3.
         *   In a Redis client, subscribe to `translated_audio:*` or a specific `translated_audio:<test_streamId>`.
         *   Verify that small audio chunks/fragments are being published to this Redis channel.
         *   This is a critical step for latency. Monitor how quickly TTS audio appears in Redis after the translated text is ready.
-        *   Initially, you might capture these fragments and try to play them locally to verify audio quality.
 
 ## Phase 5: `websocket-server` - Relay Translated Audio to Frontend
 
@@ -182,13 +179,13 @@ This document outlines a detailed, phased approach to implementing the real-time
 
 1.  **`gpu-worker`: TTS Fallback Mode**
     *   **Task:**
-        *   Implement the logic to detect ElevenLabs streaming API failures.
+        *   Implement the logic to detect Cartesia streaming API failures.
         *   If streaming fails, set `useStreamingTTS = false`.
         *   Accumulate translated text until a sentence boundary (., !, ?).
-        *   Send the full sentence to ElevenLabs non-streaming endpoint.
+        *   Send the full sentence to a non-streaming TTS endpoint (if available).
         *   Publish the entire resulting audio file as a single chunk to `translated_audio:<streamId>`.
     *   **Testing:**
-        *   Simulate an ElevenLabs streaming API failure (e.g., by temporarily pointing to a wrong URL or using invalid API key for the streaming endpoint only).
+        *   Simulate a Cartesia streaming API failure (e.g., by temporarily pointing to a wrong URL or using invalid API key for the streaming endpoint only).
         *   Verify that the `gpu-worker` switches to full-sentence mode.
         *   Verify that larger audio chunks (full sentences) are now being sent via Redis and played on the frontend.
         *   Measure the increased latency.
@@ -211,7 +208,7 @@ This document outlines a detailed, phased approach to implementing the real-time
         *   User hears translated audio with <2s delay from original speech (measure this carefully).
         *   Audio and video stay in sync for >30 seconds (observe for `video+audio` mode).
         *   Socket reconnects gracefully on disconnect (simulate network interruptions for the client).
-        *   TTS fallback to full-sentence mode if ElevenLabs streaming fails (already tested in Phase 8, re-verify).
+        *   TTS fallback to full-sentence mode if Cartesia streaming fails (already tested in Phase 8, re-verify).
     *   **Testing:**
         *   Use a stopwatch or browser developer tools to measure perceived end-to-end latency.
         *   Conduct longer test sessions (>1 minute) to check for sync drift or accumulating delays.

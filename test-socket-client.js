@@ -25,6 +25,10 @@ socket.on("request_processing", (data) => {
   // socket.disconnect(); // Optionally disconnect after confirmation
 });
 
+socket.on("translated_audio_chunk", (data) => {
+  console.log(`TestClient: Received 'translated_audio_chunk' with ${data.length} bytes of audio data.`);
+});
+
 socket.on("translation_result", (data) => { // For future use
   console.log("TestClient: Received 'translation_result':", data);
   socket.disconnect();
