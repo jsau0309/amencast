@@ -29,6 +29,13 @@ socket.on("translated_audio_chunk", (data) => {
   console.log(`TestClient: Received 'translated_audio_chunk' with ${data.length} bytes of audio data.`);
 });
 
+socket.on("translation_completed", (data) => {
+  console.log("TestClient: Received 'translation_completed', stream finished successfully:", data);
+  // Clear the timeout and disconnect gracefully now that we have confirmation.
+  clearTimeout(testTimeout);
+  socket.disconnect();
+});
+
 socket.on("translation_result", (data) => { // For future use
   console.log("TestClient: Received 'translation_result':", data);
   socket.disconnect();
@@ -48,7 +55,7 @@ socket.on("disconnect", (reason) => {
 });
 
 // Timeout to exit if nothing happens after a while
-setTimeout(() => {
+const testTimeout = setTimeout(() => {
     if (socket.connected) {
         console.log("TestClient: Test timeout, disconnecting.");
         socket.disconnect();

@@ -4,7 +4,7 @@ import { z } from 'zod';
 import prisma from '@/lib/prisma'; // Adjust path if you placed prisma.ts elsewhere (e.g., ../../lib/prisma)
 
 const CreateStreamSchema = z.object({
-  youtubeUrl: z.string().url({ message: "Invalid YouTube URL" }),
+  youtubeUrl: z.string().min(1, { message: "YouTube URL cannot be empty" }),
   languageTarget: z.string().optional(),
   format: z.string().optional(), 
 });
@@ -35,7 +35,7 @@ export async function POST(req: NextRequest) {
 
     const { youtubeUrl, languageTarget, format } = validationResult.data;
 
-    const YOUTUBE_ID_REGEX = /(?:youtube\.com\/(?:[^\/\n\s]+\/\S+\/|(?:v|e(?:mbed)?)\/|\S*?[?&]v=)|youtu\.be\/)([a-zA-Z0-9_-]{11})/; // Ensure this regex is robust
+    const YOUTUBE_ID_REGEX = /^(?:https?:\/\/)?(?:www\.)?(?:youtube\.com\/(?:watch\?v=|embed\/|live\/|shorts\/|v\/)|youtu\.be\/)([a-zA-Z0-9_-]{11})/;
     const match = youtubeUrl.match(YOUTUBE_ID_REGEX);
     const youtubeVideoId = match ? match[1] : null;
 

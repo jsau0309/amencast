@@ -1,51 +1,66 @@
-import { io, Socket } from 'socket.io-client';
+import { io, Socket } from "socket.io-client";
 
-const SOCKET_SERVER_URL = process.env.NEXT_PUBLIC_WEBSOCKET_URL || 'http://localhost:3001';
-let socketInstance: Socket | null = null;
+const SOCKET_SERVER_URL =
+  process.env.NEXT_PUBLIC_WEBSOCKET_URL || "http://localhost:3001";
 
-export const getSocket = (): Socket => {
-  if (!socketInstance) {
-    console.log(`[Frontend] Initializing new socket connection to ${SOCKET_SERVER_URL}`);
-    socketInstance = io(SOCKET_SERVER_URL, {
+class SocketManager {
+  private static instance: SocketManager;
+  private socket: Socket;
+
+  private constructor() {
+    console.log(
+      `[SocketManager] Initializing new socket connection to ${SOCKET_SERVER_URL}`
+    );
+    this.socket = io(SOCKET_SERVER_URL, {
+      autoConnect: false,
       reconnectionAttempts: 5,
-      reconnectionDelay: 1000,
-      transports: ['websocket'], // Prefer WebSocket transport
-      // You might want to add withCredentials: true if you handle auth with cookies across domains later
+      reconnectionDelay: 2000,
+      transports: ["websocket"],
     });
 
-    socketInstance.on('connect', () => {
-      console.log('[Frontend] Connected to WebSocket server. Socket ID:', socketInstance?.id);
+    this.socket.on("connect", () => {
+      console.log(
+        `[SocketManager] Connected to WebSocket server. Socket ID: ${this.socket.id}`
+      );
     });
 
-    socketInstance.on('disconnect', (reason: string) => {
-      console.log('[Frontend] Disconnected from WebSocket server. Reason:', reason);
-      // Optionally nullify the instance if you want a fresh connection next time getSocket is called after a disconnect
-      // if (reason === 'io server disconnect') {
-      //   socketInstance = null;
-      // }
+    this.socket.on("disconnect", (reason: string) => {
+      console.log(
+        `[SocketManager] Disconnected from WebSocket server. Reason: ${reason}`
+      );
     });
 
-    socketInstance.on('connect_error', (error: Error) => {
-      console.error('[Frontend] WebSocket Connection Error:', error);
-      // Potentially nullify the instance here too, so next getSocket tries a fresh connection
-      // socketInstance = null;
+    this.socket.on("connect_error", (error: Error) => {
+      console.error("[SocketManager] WebSocket Connection Error:", error);
     });
+  }
 
-  } else {
-    // If instance exists but is not connected, you might want to force a connection attempt
-    if (!socketInstance.connected) {
-        console.log('[Frontend] Socket instance exists but not connected, attempting to connect...');
-        socketInstance.connect();
+  public static getInstance(): SocketManager {
+    if (!SocketManager.instance) {
+      SocketManager.instance = new SocketManager();
+    }
+    return SocketManager.instance;
+  }
+
+  public connect(): void {
+    if (!this.socket.connected) {
+      console.log("[SocketManager] Attempting to connect...");
+      this.socket.connect();
     }
   }
-  return socketInstance;
-};
 
+  public getSocket(): Socket {
+    return this.socket;
+  }
+}
+
+export const socketManager = SocketManager.getInstance();
 // Optional: Function to explicitly disconnect the socket if needed from elsewhere in the app
 export const disconnectSocket = () => {
-  if (socketInstance && socketInstance.connected) {
+  const socket = socketManager.getSocket();
+  if (socket && socket.connected) {
     console.log('[Frontend] Explicitly disconnecting socket.');
-    socketInstance.disconnect();
+    socket.disconnect();
   }
-  socketInstance = null; // Allow re-initialization on next getSocket call
-}; 
+  // Allow re-initialization on next getSocket call
+};

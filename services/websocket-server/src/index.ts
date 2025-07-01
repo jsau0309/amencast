@@ -5,14 +5,16 @@ import { Redis, RedisOptions } from 'ioredis';
 import { v4 as uuidv4 } from 'uuid';
 import { config } from './config';
 import axios from 'axios';
+import expressWs from 'express-ws';
 
 const app = express();
 const server = http.createServer(app);
+const wsInstance = expressWs(app, server);
 
 // Basic CORS setup - adjust as needed for your frontend URL in production
 const io = new SocketIOServer(server, {
   cors: {
-    origin: "*", // Allows all origins for local dev. Be more specific in production!
+    origin: process.env.CORS_ORIGIN || "http://localhost:3000",
     methods: ["GET", "POST"]
   }
 });
@@ -182,52 +184,14 @@ async function listenForResults() {
   }
 }
 
-/**
- * Listens for real-time translated audio chunks on Redis Pub/Sub and relays them to the correct client.
- */
-async function listenForTranslatedAudio() {
-    console.log(`[WebSocketServer] Translated audio listener starting. Subscribing to 'translated_audio:*'...`);
-    try {
-        if (audioSubscriberRedis.status !== 'ready') {
-            await audioSubscriberRedis.connect();
-        }
-        await audioSubscriberRedis.psubscribe('translated_audio:*');
-
-        audioSubscriberRedis.on('pmessageBuffer', (pattern, channelBuffer, messageBuffer) => {
-            const channel = channelBuffer.toString();
-            const streamId = channel.split(':')[1];
-            
-            if (!streamId) return;
-
-            const clientRequestId = streamIdToClientRequestMap.get(streamId);
-            if (!clientRequestId) {
-                // This can happen if the client disconnected. It's not necessarily an error.
-                // console.warn(`[WebSocketServer] No clientRequestId found for streamId ${streamId} in audio relay.`);
-                return;
-            }
-
-            const socketId = clientRequestToSocketIdMap.get(clientRequestId);
-            if (socketId) {
-                const targetSocket = io.sockets.sockets.get(socketId);
-                if (targetSocket) {
-                    targetSocket.emit('translated_audio_chunk', messageBuffer);
-                    // This log can be very noisy, disable it unless debugging.
-                    // console.log(`[WebSocketServer] Relayed audio chunk (${messageBuffer.length} bytes) to socket ${socketId} for streamId ${streamId}`);
-                }
-            }
-        });
-    } catch (error) {
-        console.error('[WebSocketServer] CRITICAL: Failed to subscribe for translated audio. Real-time audio will not be relayed.', error);
-    }
-}
-
 // Renamed route and prepared for new logic
 app.post('/internal/audio-stream/:streamId', (req: express.Request, res: express.Response) => {
   const streamId = req.params.streamId;
   console.log(`[WebSocketServer] /internal/audio-stream/${streamId}: Connection received for real-time processing.`);
 
-  let masterBuffer = Buffer.alloc(0); // Buffer to accumulate all incoming audio data
+  let masterBuffer = Buffer.alloc(0);
   let totalBytesProcessedForChunks = 0;
+  let currentOffsetMs = 0; // Start at 0 milliseconds
 
   req.on('data', (chunk: Buffer) => {
     masterBuffer = Buffer.concat([masterBuffer, chunk]);
@@ -244,10 +208,11 @@ app.post('/internal/audio-stream/:streamId', (req: express.Request, res: express
       );
 
       if (chunkToPublish.length === CHUNK_SIZE_BYTES) {
-        // TODO: Publish chunkToPublish to Redis Pub/Sub: audio_chunks:<streamId>
         publisherRedis.publish(`audio_chunks:${streamId}`, chunkToPublish)
           .then(() => {
-            console.log(`[WebSocketServer] /internal/audio-stream/${streamId}: Published ${chunkToPublish.length}B chunk. Offset: ${totalBytesProcessedForChunks / BYTES_PER_SECOND}s`);
+            const offsetSeconds = (currentOffsetMs / 1000).toFixed(1);
+            console.log(`[WebSocketServer] /internal/audio-stream/${streamId}: Published ${chunkToPublish.length}B chunk. Offset: ${offsetSeconds}s`);
+            currentOffsetMs += (STRIDE_BYTES / BYTES_PER_SECOND) * 1000;
           })
           .catch(err => {
             console.error(`[WebSocketServer] /internal/audio-stream/${streamId}: Error publishing chunk to Redis:`, err);
@@ -264,26 +229,28 @@ app.post('/internal/audio-stream/:streamId', (req: express.Request, res: express
 
   req.on('end', () => {
     console.log(`[WebSocketServer] /internal/audio-stream/${streamId}: Incoming stream ended. Master buffer size: ${masterBuffer.length}`);
-    // Process any remaining data in masterBuffer that might form a final partial or full chunk
-    // This part needs careful handling for the very last chunk if it's smaller than CHUNK_SIZE_BYTES
-    // For now, our loop handles full chunks. A final partial chunk might be padded or handled differently.
+    
     // Current logic will only process full chunks. If masterBuffer.length < totalBytesProcessedForChunks + CHUNK_SIZE_BYTES
     // but masterBuffer.length > totalBytesProcessedForChunks, this remaining part is not processed into a chunk.
+    const remainingBuffer = masterBuffer.subarray(totalBytesProcessedForChunks);
+    if (remainingBuffer.length > 0) {
+      console.log(`[WebSocketServer] /internal/audio-stream/${streamId}: Processing final remaining buffer of ${remainingBuffer.length} bytes.`);
+      
+      const finalChunk = Buffer.alloc(CHUNK_SIZE_BYTES, 0); // Create a buffer of the required size, filled with silence
+      remainingBuffer.copy(finalChunk); // Copy the remaining audio data into the start of it
 
-    // Consider if the last segment needs padding to CHUNK_SIZE_BYTES or special handling.
-    // For simplicity in this step, we only publish full 1.5s chunks.
-    // A more advanced version might pad the last chunk or send it as-is with its actual length.
-
-    // Clean up any remaining part of the buffer that wasn't processed into full strides
-    if (totalBytesProcessedForChunks > 0 && masterBuffer.length > totalBytesProcessedForChunks) {
-        masterBuffer = masterBuffer.subarray(totalBytesProcessedForChunks);
-    } else if (totalBytesProcessedForChunks === 0) {
-        // masterBuffer might still contain data if no full chunk was ever formed
-    } else {
-        masterBuffer = Buffer.alloc(0); // All processed
+      publisherRedis.publish(`audio_chunks:${streamId}`, finalChunk)
+        .then(() => {
+          const offsetSeconds = (currentOffsetMs / 1000).toFixed(1);
+          console.log(`[WebSocketServer] /internal/audio-stream/${streamId}: Published FINAL padded chunk of ${finalChunk.length}B. Offset: ${offsetSeconds}s`);
+        })
+        .catch(err => {
+          console.error(`[WebSocketServer] /internal/audio-stream/${streamId}: Error publishing FINAL chunk to Redis:`, err);
+        });
     }
-    console.log(`[WebSocketServer] /internal/audio-stream/${streamId}: Remaining in masterBuffer after stream end: ${masterBuffer.length} bytes.`);
 
+    // The logic to send the STOP command was here, but has been moved to the client 'disconnect' event handler.
+    // This ensures the stream is only stopped when the user navigates away or closes the page.
 
     res.status(200).send('Audio stream processing finished.');
   });
@@ -296,13 +263,114 @@ app.post('/internal/audio-stream/:streamId', (req: express.Request, res: express
   });
 
   req.on('close', () => {
-    console.log(`[WebSocketServer] /internal/audio-stream/${streamId}: Connection closed by client.`);
-    // Perform any necessary cleanup for this streamId if the connection drops prematurely
+    console.log(`[WebSocketServer] /internal/audio-stream/${streamId}: Connection closed by client (ingestion-worker).`);
+    // This is a critical event. The ingestion has stopped, so we must stop the downstream services.
+    const ingestionCompleteCommand = {
+        action: 'ingestion_complete',
+        streamId: streamId,
+    };
+    publisherRedis.publish('stream_control', JSON.stringify(ingestionCompleteCommand))
+        .then(() => console.log(`[WebSocketServer] Published INGESTION_COMPLETE command for stream ${streamId} due to ingestion client disconnect.`))
+        .catch(err => console.error(`[WebSocketServer] Error publishing INGESTION_COMPLETE command for stream ${streamId} after client disconnect:`, err));
   });
+});
+
+wsInstance.app.ws('/audio-output/:streamId', (ws, req) => {
+    const streamId = req.params.streamId;
+    console.log(`[WebSocketServer] /audio-output/${streamId}: Client connected for audio stream.`);
+
+    const audioSubscriber = new Redis(redisOptions);
+    const channel = `translated_audio:${streamId}`;
+
+    audioSubscriber.subscribe(channel, (err, count) => {
+        if (err) {
+            console.error(`[WebSocketServer] Failed to subscribe to Redis channel ${channel}`, err);
+            ws.close(1011, "Failed to subscribe to audio channel.");
+            return;
+        }
+        console.log(`[WebSocketServer] Subscribed to ${channel} for audio relay.`);
+    });
+
+    audioSubscriber.on('messageBuffer', (ch, message) => {
+        if (ch.toString() === channel) {
+            if (ws.readyState === ws.OPEN) {
+                ws.send(message);
+            }
+        }
+    });
+
+    ws.on('close', () => {
+        console.log(`[WebSocketServer] /audio-output/${streamId}: Client disconnected.`);
+        audioSubscriber.unsubscribe(channel);
+        audioSubscriber.quit();
+    });
+
+    ws.on('error', (error) => {
+        console.error(`[WebSocketServer] /audio-output/${streamId}: WebSocket error.`, error);
+        audioSubscriber.unsubscribe(channel);
+        audioSubscriber.quit();
+    });
 });
 
 io.on('connection', (socket: Socket) => {
   console.log(`[WebSocketServer] Client connected: ${socket.id}`);
+
+  // New handler for clients to join a specific audio stream
+  socket.on('join-audio-stream', async (streamId: string) => {
+    console.log(`[WebSocketServer] Client ${socket.id} joining audio stream room: audio-${streamId}`);
+    socket.join(`audio-${streamId}`);
+
+    // Each client gets its own subscriber to avoid conflicts
+    const audioSubscriber = new Redis(redisOptions);
+    await audioSubscriber.connect();
+    
+    const audioChannel = `synthesized_audio:${streamId}`;
+    const statusChannel = `stream_status:${streamId}`;
+
+    audioSubscriber.subscribe(audioChannel, statusChannel, (err, count) => {
+        if (err) {
+            console.error(`[WebSocketServer] Failed to subscribe to Redis channels for stream ${streamId}`, err);
+            socket.emit('request_error', { streamId, message: 'Failed to subscribe to audio stream.'});
+            return;
+        }
+        console.log(`[WebSocketServer] Socket ${socket.id} successfully subscribed to channels for stream ${streamId}`);
+    });
+
+    audioSubscriber.on('messageBuffer', (channelBuffer, messageBuffer) => {
+        const channel = channelBuffer.toString();
+        if (channel === audioChannel) {
+            io.to(`audio-${streamId}`).emit('audio_chunk', { streamId, audioData: messageBuffer });
+        }
+    });
+    
+    audioSubscriber.on('message', (channel, message) => {
+        const channelStr = channel.toString();
+        if(channelStr === statusChannel) {
+            try {
+                const { status } = JSON.parse(message);
+                if (status === 'completed') {
+                    io.to(`audio-${streamId}`).emit('translation_completed', { streamId });
+                    console.log(`[WebSocketServer] Relayed 'translation_completed' to room audio-${streamId}`);
+                }
+            } catch (e) {
+                console.error(`[WebSocketServer] Error parsing status message for stream ${streamId}:`, message);
+            }
+        }
+    });
+
+    socket.on('leave-audio-stream', () => {
+        console.log(`[WebSocketServer] Client ${socket.id} leaving audio stream room: audio-${streamId}`);
+        socket.leave(`audio-${streamId}`);
+        audioSubscriber.unsubscribe();
+        audioSubscriber.quit();
+    });
+
+    socket.on('disconnect', () => {
+        console.log(`[WebSocketServer] Client ${socket.id} disconnected, cleaning up audio stream subscriptions for stream ${streamId}`);
+        audioSubscriber.unsubscribe();
+        audioSubscriber.quit();
+    });
+  });
 
   socket.on('initiate_youtube_translation', async (data: { 
     youtubeUrl: string; 
@@ -404,21 +472,44 @@ io.on('connection', (socket: Socket) => {
 
   socket.on('disconnect', () => {
     console.log(`[WebSocketServer] Client disconnected: ${socket.id}`);
-    let associatedClientRequestId: string | null = null;
-    for (const [clientRequestId, socketIdStored] of clientRequestToSocketIdMap.entries()) {
-      if (socketIdStored === socket.id) {
-        associatedClientRequestId = clientRequestId;
-        clientRequestToSocketIdMap.delete(clientRequestId);
-        console.log(`[WebSocketServer] Cleaned up clientRequestToSocketIdMap for disconnected socket: ${socket.id} (clientRequestId: ${clientRequestId})`);
-        break; 
-      }
+    
+    let clientRequestIdToDelete: string | null = null;
+    let streamIdToStop: string | null = null;
+
+    // Find the client request ID for the disconnected socket
+    for (const [key, value] of clientRequestToSocketIdMap.entries()) {
+        if (value === socket.id) {
+            clientRequestIdToDelete = key;
+            break;
+        }
     }
-    if (associatedClientRequestId) {
-        for (const [streamId, clientRequestIdMapped] of streamIdToClientRequestMap.entries()) {
-            if (clientRequestIdMapped === associatedClientRequestId) {
-                console.log(`[WebSocketServer] Note: Client ${associatedClientRequestId} for stream ${streamId} disconnected. Results for this stream might not be delivered if they haven't been already.`);
+
+    if (clientRequestIdToDelete) {
+        // Find the stream ID associated with that client request ID
+        for (const [key, value] of streamIdToClientRequestMap.entries()) {
+            if (value === clientRequestIdToDelete) {
+                streamIdToStop = key;
+                break;
             }
         }
+        
+        // Clean up the maps
+        clientRequestToSocketIdMap.delete(clientRequestIdToDelete);
+        if (streamIdToStop) {
+            streamIdToClientRequestMap.delete(streamIdToStop);
+        }
+        console.log(`[WebSocketServer] Cleaned up maps for disconnected client: ${clientRequestIdToDelete}`);
+    }
+
+    // If we found a stream to stop, publish the command
+    if (streamIdToStop) {
+        const stopCommand = {
+            action: 'stop',
+            streamId: streamIdToStop,
+        };
+        publisherRedis.publish('stream_control', JSON.stringify(stopCommand))
+            .then(() => console.log(`[WebSocketServer] Published STOP command for stream ${streamIdToStop} due to client disconnect.`))
+            .catch(err => console.error(`[WebSocketServer] Error publishing STOP command for stream ${streamIdToStop}:`, err));
     }
   });
 });
@@ -438,8 +529,7 @@ Promise.all([
 ]).then(() => {
   server.listen(config.port, () => {
     console.log(`[WebSocketServer] Express server with Socket.IO listening on http://localhost:${config.port}`);
-    listenForResults(); // Start the results listener after server starts and publisher is connected
-    listenForTranslatedAudio(); // Start the real-time audio listener
+    // No longer starting global listeners here; they are now managed per-socket.
   });
 }).catch(err => {
   console.error('[WebSocketServer] Critical error during publisher Redis connection or server start. Server not started.', err);

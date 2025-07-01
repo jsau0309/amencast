@@ -21,26 +21,13 @@ import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { toast } from "sonner";
-import { getSocket } from '../lib/socket'; // Assuming your socket helper is here
+import { audioSocketManager } from '../lib/AudioSocketManager';
+import { AudioPlayer } from '../lib/AudioPlayer';
 
-// Define a type for the stream details we expect from the API (if still used)
 interface StreamDetails {
   id: string;
   youtube_video_id: string;
   status: string;
-  // listener_id: string; // From your original interface, include if still relevant
-  // started_at: string;  // From your original interface, include if still relevant
-  // ended_at?: string | null; // From your original interface, include if still relevant
-}
-
-// Define types for Socket.IO data
-interface TranslationResultData {
-  streamId: string;
-  status: 'success' | 'error';
-  // sourceText?: string; // No longer storing in state for display
-  // translatedText?: string; // No longer storing in state for display
-  finalAudioUrl?: string;
-  errorMessage?: string;
 }
 
 const FEEDBACK_OPTIONS = [
@@ -51,15 +38,6 @@ const FEEDBACK_OPTIONS = [
   { value: "OTHER", label: "Other Feedback" },
 ];
 
-/**
- * Displays a livestream page with translated audio, allowing users to toggle between video+audio and audio-only modes, listen to translated audio, and submit feedback.
- *
- * Fetches stream metadata, establishes a Socket.IO connection to receive translation results, and manages playback of translated audio alongside the original YouTube livestream. Handles authentication, error states, and user feedback submission within a responsive UI.
- *
- * @returns The React component for the livestream translation page.
- *
- * @remark The component automatically mutes the YouTube player when translated audio is played in video+audio mode, but does not unmute it when translated audio is paused.
- */
 export default function LivestreamPage() {
   const searchParams = useSearchParams();
   const router = useRouter();
@@ -74,9 +52,8 @@ export default function LivestreamPage() {
   const [initialDataLoading, setInitialDataLoading] = useState(true);
   const [initialDataError, setInitialDataError] = useState<string | null>(null);
 
-  const [finalAudioUrl, setFinalAudioUrl] = useState('');
-  const [isTranslationLoading, setIsTranslationLoading] = useState(true);
   const [translationError, setTranslationError] = useState<string | null>(null);
+  const [isTranslationCompleted, setIsTranslationCompleted] = useState(false);
 
   const [currentFormat, setCurrentFormat] = useState(initialFormat);
   const [isPlayingTranslatedAudio, setIsPlayingTranslatedAudio] = useState(false);
@@ -87,45 +64,50 @@ export default function LivestreamPage() {
   const [isSubmittingFeedback, setIsSubmittingFeedback] = useState(false);
   const [feedbackSubmitError, setFeedbackSubmitError] = useState<string | null>(null);
 
-  const translatedAudioPlayerRef = useRef<HTMLAudioElement>(null);
+  const playerRef = useRef<AudioPlayer | null>(null);
   const youtubePlayerRef = useRef<ReactPlayer>(null);
 
-  // Effect 1: Fetch initial stream details (like YouTube video ID)
   useEffect(() => {
     if (!streamIdFromUrl) {
       setInitialDataError("Stream ID is missing from URL.");
       setInitialDataLoading(false);
-      setIsTranslationLoading(false); // Also stop translation loading if no streamId
       return;
     }
+    
+    const player = new AudioPlayer({ onPlaybackStateChange: setIsPlayingTranslatedAudio });
+    playerRef.current = player;
+    
+    audioSocketManager.startAudioStream(streamIdFromUrl, (audioChunk) => {
+        player.addChunk(audioChunk);
+    }, (error) => {
+        if(error) {
+            console.error('[LivePage] Received error from audio stream:', error);
+            setTranslationError(error.message || 'A stream error occurred.');
+        } else {
+            console.log(`[LivePage] Translation completed for stream ${streamIdFromUrl}`);
+            setIsTranslationCompleted(true);
+        }
+    });
 
     const fetchStreamDetails = async () => {
       setInitialDataLoading(true);
       setInitialDataError(null);
       try {
-        const clerkToken = await getToken();
-        if (!clerkToken) {
-          setInitialDataError("Not authenticated to fetch stream details.");
-          setInitialDataLoading(false);
-          return;
-        }
-
+        // Using a test user ID as per previous temporary fix
         const response = await fetch(`/api/streams/${streamIdFromUrl}`, {
-          headers: { Authorization: `Bearer ${clerkToken}` },
+          headers: { Authorization: `Bearer FAKE_TOKEN` },
         });
-
         if (!response.ok) {
           const errData = await response.json().catch(() => ({}));
           setInitialDataError(errData.error || `Failed to fetch stream details (status: ${response.status}).`);
-          setInitialDataLoading(false);
-          return;
-        }
-        const data: StreamDetails = await response.json();
-        setStreamDetails(data);
-        if (data.youtube_video_id) {
-          setYoutubeVideoId(`https://www.youtube.com/watch?v=${data.youtube_video_id}`);
         } else {
-          setInitialDataError("YouTube video ID not found in stream details.");
+          const data: StreamDetails = await response.json();
+          setStreamDetails(data);
+          if (data.youtube_video_id) {
+            setYoutubeVideoId(`https://www.youtube.com/watch?v=${data.youtube_video_id}`);
+          } else {
+            setInitialDataError("YouTube video ID not found in stream details.");
+          }
         }
       } catch (e: any) {
         console.error("Error fetching stream details:", e);
@@ -135,86 +117,13 @@ export default function LivestreamPage() {
     };
 
     fetchStreamDetails();
-  }, [streamIdFromUrl, getToken]);
-
-  // Effect 2: Handle Socket.IO communication for translation results
-  useEffect(() => {
-    if (!streamIdFromUrl) {
-        setTranslationError("Stream ID is missing, cannot listen for translations.");
-        setIsTranslationLoading(false);
-        return;
-    }
-
-    const socket = getSocket();
-    if (!socket.connected) {
-        console.log("[LivePage] Socket not initially connected, attempting to connect...");
-        socket.connect();
-    }
-    
-    console.log(`[LivePage] Setting up Socket.IO listeners for streamId: ${streamIdFromUrl}`);
-    setIsTranslationLoading(true);
-    setTranslationError(null);
-    // Reset previous translation data when a new streamId is processed or page loads
-    setFinalAudioUrl('');
-    setIsPlayingTranslatedAudio(false);
-
-
-    const handleTranslationResult = (data: TranslationResultData) => {
-      if (data.streamId === streamIdFromUrl) {
-        console.log('[LivePage] Received translation_result:', data);
-        if (data.status === 'success') {
-          // setSourceText(data.sourceText || 'N/A'); // REMOVED
-          // setTranslatedText(data.translatedText || 'N/A'); // REMOVED
-          setFinalAudioUrl(data.finalAudioUrl || '');
-          setTranslationError(null);
-          // Auto-play translated audio when it arrives if a URL is present.
-          // User can then pause it using controls.
-          if (data.finalAudioUrl) {
-            setIsPlayingTranslatedAudio(true);
-          }
-        } else {
-          setTranslationError(data.errorMessage || 'An error occurred during translation process.');
-          setFinalAudioUrl(''); // Clear any old audio URL on error
-        }
-        setIsTranslationLoading(false);
-      }
-    };
-
-    const handleServerError = (data: { streamId?: string; message: string; clientRequestId?:string }) => {
-      // Only handle error if it's for the current stream or if no streamId specified (could be general)
-      if (data.streamId === streamIdFromUrl || (!data.streamId && data.message)) {
-        console.error('[LivePage] Received error from server:', data);
-        setTranslationError(data.message || 'A server error occurred.');
-        setIsTranslationLoading(false);
-        setFinalAudioUrl(''); // Clear audio URL on error
-      }
-    };
-
-    socket.on('translation_result', handleTranslationResult);
-    socket.on('translation_error', handleServerError);
-    socket.on('request_error', handleServerError); // For errors from websocket-server during initial request phase
 
     return () => {
-      console.log(`[LivePage] Cleaning up Socket.IO listeners for streamId: ${streamIdFromUrl}`);
-      socket.off('translation_result', handleTranslationResult);
-      socket.off('translation_error', handleServerError);
-      socket.off('request_error', handleServerError);
+      console.log(`[LivePage] Cleaning up for streamId: ${streamIdFromUrl}`);
+      audioSocketManager.stopAudioStream(streamIdFromUrl);
+      player.stop();
     };
-  }, [streamIdFromUrl]); // Re-run if streamIdFromUrl changes
-
-  // Effect 3: Control translated audio playback via state
-  useEffect(() => {
-    const audioEl = translatedAudioPlayerRef.current;
-    if (audioEl && finalAudioUrl) { // Ensure there's a URL to play
-      if (isPlayingTranslatedAudio) {
-        audioEl.load(); // Important to load the new src if finalAudioUrl changes
-        audioEl.play().catch(e => console.warn("Error trying to play translated audio:", e));
-      } else {
-        audioEl.pause();
-      }
-    }
-  }, [isPlayingTranslatedAudio, finalAudioUrl]);
-
+  }, [streamIdFromUrl]);
 
   const handleFeedbackSubmit = async () => {
     if (!feedbackCode || !streamIdFromUrl) {
@@ -250,18 +159,19 @@ export default function LivestreamPage() {
   };
 
   const toggleTranslatedAudioPlayback = () => {
-    if (!finalAudioUrl) return; // Don't toggle if no audio is loaded
-    setIsPlayingTranslatedAudio(prev => !prev);
+    if (playerRef.current) {
+        if (isPlayingTranslatedAudio) {
+            playerRef.current.pause();
+        } else {
+            playerRef.current.play();
+        }
+    }
 
     if (currentFormat === "video-audio" && youtubePlayerRef.current) {
         const internalPlayer = youtubePlayerRef.current.getInternalPlayer();
         if (internalPlayer && typeof internalPlayer.mute === 'function' && typeof internalPlayer.unMute === 'function') {
-            // If we are about to play our translation, mute the YouTube player.
-            // If we are about to pause our translation, user might want to hear original, so unmute.
-            if (!isPlayingTranslatedAudio) { // Condition is before state update, so !isPlaying means "will be playing"
+            if (!isPlayingTranslatedAudio) {
                 internalPlayer.mute();
-            } else {
-                // internalPlayer.unMute(); // Or let user control this manually
             }
         }
     }
@@ -340,32 +250,25 @@ export default function LivestreamPage() {
   );
 
   const translationDisplay = (
-    <div className="my-4 p-4 border rounded-md bg-background shadow-md">
-      {isTranslationLoading && !finalAudioUrl && ( // Show loading only if we don't have a result yet
+    <div className="my-4 p-4 border rounded-md bg-background shadow-md min-h-[120px]">
+      {initialDataLoading ? ( 
         <div className="flex items-center justify-center py-8">
           <SpinnerIcon className="h-8 w-8 animate-spin text-primary" />
-          <p className="ml-3 text-lg">Translating, please wait...</p>
+          <p className="ml-3 text-lg">Connecting to translation stream...</p>
         </div>
-      )}
-      {translationError && (
+      ) : translationError ? (
         <div className="text-center py-4">
             <p className="text-destructive text-lg">Translation Error:</p>
             <p className="text-muted-foreground">{translationError}</p>
         </div>
-      )}
-      {finalAudioUrl && !translationError && (
+      ) : (
         <div className="space-y-3">
           <h3 className="font-semibold text-xl mb-2">Translated Audio ({lang.toUpperCase()}):</h3>
-          <audio ref={translatedAudioPlayerRef} controls src={finalAudioUrl} className="w-full">
-            Your browser does not support the audio element.
-          </audio>
            <p className="text-sm text-muted-foreground mt-1">
-             {isPlayingTranslatedAudio ? "Playing translated audio" : "Translated audio ready"}
+             {isTranslationCompleted ? "Translation Finished." : isPlayingTranslatedAudio ? "Playing..." : "Paused"}
            </p>
         </div>
       )}
-      {/* REMOVED sourceText display block */}
-      {/* REMOVED translatedText display block */}
     </div>
   );
 
@@ -388,7 +291,7 @@ export default function LivestreamPage() {
             {translationDisplay} 
 
             <div className="flex items-center justify-center gap-8 mt-auto py-8">
-              <Button onClick={toggleTranslatedAudioPlayback} variant={isPlayingTranslatedAudio ? "default" : "outline"} size="icon" className="h-16 w-16 rounded-full" disabled={!finalAudioUrl || isTranslationLoading}>
+              <Button onClick={toggleTranslatedAudioPlayback} variant={isPlayingTranslatedAudio ? "default" : "outline"} size="icon" className="h-16 w-16 rounded-full" disabled={initialDataLoading}>
                 {isPlayingTranslatedAudio ? <Volume2 className="h-6 w-6" /> : <VolumeX className="h-6 w-6" />}
               </Button>
               <Button variant="outline" size="icon" className="h-16 w-16 rounded-full" onClick={switchToVideoMode}><Video className="h-6 w-6" /></Button>
@@ -416,8 +319,8 @@ export default function LivestreamPage() {
               <ReactPlayer
                 ref={youtubePlayerRef}
                 url={youtubeVideoId}
-                playing={true} // Consider making this pausable by user
-                muted={isPlayingTranslatedAudio && !!finalAudioUrl} // Mute original if translated audio is playing (or about to play)
+                playing={true}
+                muted={isPlayingTranslatedAudio}
                 controls={true}
                 width="100%"
                 height="100%"
@@ -430,13 +333,14 @@ export default function LivestreamPage() {
           {translationDisplay}
 
           <div className="flex flex-col items-center gap-4">
-            <div className="flex items-center justify-center gap-8 mt-4">
-                <Button onClick={toggleTranslatedAudioPlayback} variant={isPlayingTranslatedAudio ? "default" : "outline"} size="icon" className="h-16 w-16 rounded-full" disabled={!finalAudioUrl || isTranslationLoading}>
-                    {isPlayingTranslatedAudio ? <Volume2 className="h-6 w-6" /> : <VolumeX className="h-6 w-6" />}
+            <div className="flex items-center justify-center gap-4 mt-4">
+                <Button onClick={toggleTranslatedAudioPlayback} variant={isPlayingTranslatedAudio ? "default" : "outline"} size="lg" disabled={initialDataLoading}>
+                    {isPlayingTranslatedAudio ? <Volume2 className="mr-2 h-5 w-5" /> : <VolumeX className="mr-2 h-5 w-5" />}
+                    {isPlayingTranslatedAudio ? "Mute" : "Listen"}
                 </Button>
-                <Button variant="outline" size="icon" className="h-16 w-16 rounded-full" onClick={switchToAudioMode}><Headphones className="h-6 w-6" /></Button>
-                <Button variant="outline" size="icon" className="h-16 w-16 rounded-full" onClick={() => setIsFeedbackModalOpen(true)}><MessageCircleQuestion className="h-6 w-6" /></Button>
-                <Button variant="outline" size="icon" className="h-16 w-16 rounded-full" onClick={goBackToSubmit}><X className="h-6 w-6" /></Button>
+                <Button variant="outline" onClick={switchToAudioMode}><Headphones className="mr-2 h-5 w-5" />Audio Only</Button>
+                <Button variant="outline" onClick={() => setIsFeedbackModalOpen(true)}><MessageCircleQuestion className="mr-2 h-5 w-5" />Feedback</Button>
+                <Button variant="destructive" onClick={goBackToSubmit}><X className="mr-2 h-5 w-5" />Stop</Button>
             </div>
           </div>
           {feedbackModal}

@@ -70,9 +70,19 @@ function streamYouTubeAudioAsPcm(youtubeUrl: string, streamId: string): Readable
   ytdlp.stderr.on('data', (data) => {
     console.log(`[IngestionWorker] yt-dlp stderr for ${streamId}: ${data.toString()}`);
   });
+  ytdlp.on('exit', (code) => {
+    if (code !== 0) {
+        console.error(`[IngestionWorker] yt-dlp process for ${streamId} exited with code ${code}.`);
+    }
+  });
 
   ffmpeg.stderr.on('data', (data) => {
     console.log(`[IngestionWorker] ffmpeg stderr for ${streamId}: ${data.toString()}`);
+  });
+  ffmpeg.on('exit', (code) => {
+    if (code !== 0) {
+        console.error(`[IngestionWorker] ffmpeg process for ${streamId} exited with code ${code}.`);
+    }
   });
 
   // Handle errors during process spawning
@@ -446,24 +456,27 @@ async function main() {
           console.log(`[IngestionWorker] /initiate-stream-processing: Upstream POST to websocket-server for ${streamId} completed with status ${upstreamRes.statusCode}. Body: ${responseBody}`);
           if (upstreamRes.statusCode !== 200) {
             console.error(`[IngestionWorker] /initiate-stream-processing: Error response from websocket-server for ${streamId}: ${upstreamRes.statusCode}`);
+            if (!pcmAudioStream.destroyed) {
+              pcmAudioStream.destroy();
+            }
           }
         });
       });
       upstreamHttpRequest.on('error', (e) => {
         console.error(`[IngestionWorker] /initiate-stream-processing: Problem with upstream HTTP POST for ${streamId}: ${e.message}`);
-        if (!pcmAudioStream.destroyed) {
-          pcmAudioStream.destroy();
+        if (!upstreamHttpRequest.destroyed) {
+          upstreamHttpRequest.destroy(e);
         }
       });
       pcmAudioStream.pipe(upstreamHttpRequest);
-      pcmAudioStream.on('error', (err) => {
-        console.error(`[IngestionWorker] /initiate-stream-processing: Error from pcmAudioStream (ffmpeg) for ${streamId}:`, err.message);
-        if (!upstreamHttpRequest.destroyed) {
-          upstreamHttpRequest.destroy(err);
-        }
-      });
       pcmAudioStream.on('end', () => {
         console.log(`[IngestionWorker] /initiate-stream-processing: pcmAudioStream for ${streamId} ended. Upstream HTTP request should complete.`);
+      });
+      pcmAudioStream.on('close', () => {
+        console.log(`[IngestionWorker] /initiate-stream-processing: pcmAudioStream for ${streamId} has been closed.`);
+        if(!upstreamHttpRequest.destroyed) {
+            upstreamHttpRequest.end();
+        }
       });
       res.status(202).json({ message: 'Stream processing initiated', streamId: streamId });
     } catch (error: any) {

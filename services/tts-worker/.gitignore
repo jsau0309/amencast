@@ -1,0 +1,13 @@
+node_modules/
+dist/
+.env
+*.log
+
+# SQLite database file
+bibledb/
+bible/bible.sqlite
+
+# Python virtual environment
+whisper/.venv/
+whisper/__pycache__/
+whisper/*.pyc 

@@ -27,6 +27,9 @@ export const config = {
     apiKey: process.env.ELEVENLABS_API_KEY,
     voiceId: process.env.ELEVENLABS_VOICE_ID || 'JBFqnCBsd6RMkjVDRZzb', // Default from previous worker.config
   },
+  assemblyai: {
+    apiKey: process.env.ASSEMBLYAI_API_KEY,
+  },
   supabase: {
     url: process.env.SUPABASE_URL,
     serviceRoleKey: process.env.SUPABASE_SERVICE_ROLE_KEY,
