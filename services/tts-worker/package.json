@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "ts-node src/realtimeWorker.ts",
     "dev:realtime": "ts-node src/realtimeWorker.ts",
+    "start:production": "ts-node src/realtimeWorker.ts",
     "build": "tsc",
     "start": "node dist/index.js",
     "test": "jest",

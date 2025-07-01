@@ -4,10 +4,32 @@ import { CartesiaClient } from '@cartesia/cartesia-js';
 import { Room, LocalAudioTrack, AudioSource, AudioFrame, TrackPublishOptions, TrackSource } from '@livekit/rtc-node';
 import { AccessToken } from 'livekit-server-sdk';
 import { Buffer } from 'buffer';
+import * as http from 'http';
 
 type CartesiaWebsocket = ReturnType<CartesiaClient['tts']['websocket']>;
 
 console.log('[TTS-Worker] Starting up...');
+
+// Health check server for Docker/RunPod
+const healthServer = http.createServer((req, res) => {
+    if (req.url === '/health') {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ 
+            status: 'healthy', 
+            activeJobs: activeJobs.size,
+            uptime: process.uptime(),
+            timestamp: new Date().toISOString()
+        }));
+    } else {
+        res.writeHead(404);
+        res.end('Not Found');
+    }
+});
+
+const healthPort = process.env.HEALTH_PORT || 8080;
+healthServer.listen(healthPort, () => {
+    console.log(`[TTS-Worker] Health server listening on port ${healthPort}`);
+});
 
 interface JobContext {
     streamId: string;
@@ -203,6 +225,7 @@ function signalShutdownHandler() {
         return job.room.disconnect()
     });
     Promise.all(disconnectPromises).finally(() => {
+        healthServer.close();
         subscriber.quit();
         publisher.quit();
         controlSubscriber.quit();
