@@ -1,11 +1,12 @@
-import { io, Socket } from "socket.io-client";
+import { Socket } from "socket.io-client";
+import io from "socket.io-client";
 
 const SOCKET_SERVER_URL =
   process.env.NEXT_PUBLIC_WEBSOCKET_URL || "http://localhost:3001";
 
 class SocketManager {
   private static instance: SocketManager;
-  private socket: Socket;
+  private socket: typeof Socket;
 
   private constructor() {
     console.log(
@@ -49,7 +50,7 @@ class SocketManager {
     }
   }
 
-  public getSocket(): Socket {
+  public getSocket(): typeof Socket {
     return this.socket;
   }
 }

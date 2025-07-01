@@ -21,8 +21,7 @@ import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { toast } from "sonner";
-import { audioSocketManager } from '../lib/AudioSocketManager';
-import { AudioPlayer } from '../lib/AudioPlayer';
+import { LiveKitAudioPlayer } from '@/components/LiveKitAudioPlayer';
 
 interface StreamDetails {
   id: string;
@@ -64,8 +63,17 @@ export default function LivestreamPage() {
   const [isSubmittingFeedback, setIsSubmittingFeedback] = useState(false);
   const [feedbackSubmitError, setFeedbackSubmitError] = useState<string | null>(null);
 
-  const playerRef = useRef<AudioPlayer | null>(null);
   const youtubePlayerRef = useRef<ReactPlayer>(null);
+
+  const handleAudioError = (error: string) => {
+    console.error('[LivePage] LiveKit audio error:', error);
+    setTranslationError(error);
+  };
+
+  const handleTranslationComplete = () => {
+    console.log(`[LivePage] Translation completed for stream ${streamIdFromUrl}`);
+    setIsTranslationCompleted(true);
+  };
 
   useEffect(() => {
     if (!streamIdFromUrl) {
@@ -73,21 +81,19 @@ export default function LivestreamPage() {
       setInitialDataLoading(false);
       return;
     }
-    
-    const player = new AudioPlayer({ onPlaybackStateChange: setIsPlayingTranslatedAudio });
-    playerRef.current = player;
-    
-    audioSocketManager.startAudioStream(streamIdFromUrl, (audioChunk) => {
-        player.addChunk(audioChunk);
-    }, (error) => {
-        if(error) {
-            console.error('[LivePage] Received error from audio stream:', error);
-            setTranslationError(error.message || 'A stream error occurred.');
-        } else {
-            console.log(`[LivePage] Translation completed for stream ${streamIdFromUrl}`);
-            setIsTranslationCompleted(true);
-        }
-    });
+
+    // Check if this is a test room (skip database lookup)
+    if (streamIdFromUrl.startsWith('amencast-test-room')) {
+      console.log('🧪 Test room detected, skipping database lookup');
+      setStreamDetails({
+        id: streamIdFromUrl,
+        youtube_video_id: 'test-video',
+        status: 'testing'
+      });
+      setYoutubeVideoId('https://www.youtube.com/watch?v=dQw4w9WgXcQ'); // Test video
+      setInitialDataLoading(false);
+      return;
+    }
 
     const fetchStreamDetails = async () => {
       setInitialDataLoading(true);
@@ -120,8 +126,7 @@ export default function LivestreamPage() {
 
     return () => {
       console.log(`[LivePage] Cleaning up for streamId: ${streamIdFromUrl}`);
-      audioSocketManager.stopAudioStream(streamIdFromUrl);
-      player.stop();
+      // LiveKit cleanup is handled by the LiveKitAudioPlayer component
     };
   }, [streamIdFromUrl]);
 
@@ -159,22 +164,20 @@ export default function LivestreamPage() {
   };
 
   const toggleTranslatedAudioPlayback = () => {
-    if (playerRef.current) {
-        if (isPlayingTranslatedAudio) {
-            playerRef.current.pause();
-        } else {
-            playerRef.current.play();
-        }
-    }
-
+    // For LiveKit, we'll control audio through muting/unmuting the YouTube player
+    // The LiveKit audio will play automatically when available
     if (currentFormat === "video-audio" && youtubePlayerRef.current) {
         const internalPlayer = youtubePlayerRef.current.getInternalPlayer();
         if (internalPlayer && typeof internalPlayer.mute === 'function' && typeof internalPlayer.unMute === 'function') {
-            if (!isPlayingTranslatedAudio) {
+            if (isPlayingTranslatedAudio) {
+                internalPlayer.unMute();
+            } else {
                 internalPlayer.mute();
             }
         }
     }
+    // Toggle the state - this will be managed by the LiveKit component
+    setIsPlayingTranslatedAudio(!isPlayingTranslatedAudio);
   };
 
   const switchToAudioMode = () => setCurrentFormat("audio-only");
@@ -251,22 +254,28 @@ export default function LivestreamPage() {
 
   const translationDisplay = (
     <div className="my-4 p-4 border rounded-md bg-background shadow-md min-h-[120px]">
-      {initialDataLoading ? ( 
-        <div className="flex items-center justify-center py-8">
-          <SpinnerIcon className="h-8 w-8 animate-spin text-primary" />
-          <p className="ml-3 text-lg">Connecting to translation stream...</p>
-        </div>
-      ) : translationError ? (
+      {translationError ? (
         <div className="text-center py-4">
-            <p className="text-destructive text-lg">Translation Error:</p>
-            <p className="text-muted-foreground">{translationError}</p>
+          <p className="text-destructive text-lg">Translation Error:</p>
+          <p className="text-muted-foreground">{translationError}</p>
         </div>
-      ) : (
+      ) : streamIdFromUrl ? (
         <div className="space-y-3">
           <h3 className="font-semibold text-xl mb-2">Translated Audio ({lang.toUpperCase()}):</h3>
-           <p className="text-sm text-muted-foreground mt-1">
-             {isTranslationCompleted ? "Translation Finished." : isPlayingTranslatedAudio ? "Playing..." : "Paused"}
-           </p>
+          <LiveKitAudioPlayer
+            streamId={streamIdFromUrl}
+            onPlaybackStateChange={setIsPlayingTranslatedAudio}
+            onError={handleAudioError}
+            onTranslationComplete={handleTranslationComplete}
+          />
+          <p className="text-sm text-muted-foreground mt-1">
+            {isTranslationCompleted ? "Translation Finished." : isPlayingTranslatedAudio ? "Playing..." : "Waiting for audio..."}
+          </p>
+        </div>
+      ) : (
+        <div className="flex items-center justify-center py-8">
+          <SpinnerIcon className="h-8 w-8 animate-spin text-primary" />
+          <p className="ml-3 text-lg">Loading stream...</p>
         </div>
       )}
     </div>
