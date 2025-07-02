@@ -83,7 +83,7 @@ export class DirectWorker {
         canPublishData: true
       });
 
-      const token = at.toJwt();
+      const token = await at.toJwt();
 
       // Create and configure the room
       this.currentRoom = new Room();

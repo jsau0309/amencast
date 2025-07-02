@@ -16,46 +16,18 @@ NC='\033[0m' # No Color
 
 # Configuration
 IMAGE_NAME="amencast-tts-worker"
-TAG="latest"
-REGISTRY="your-docker-registry" # Update this with your registry
+TAG="v2"
+REGISTRY="samuel0109"
 
-echo -e "${YELLOW}📦 Building Docker image...${NC}"
-docker build -t $IMAGE_NAME:$TAG .
-
-echo -e "${GREEN}✅ Docker image built successfully!${NC}"
-
-# Test the image locally (optional)
-echo -e "${YELLOW}🧪 Testing image locally (optional)...${NC}"
-echo "You can test the image locally with:"
-echo "docker run -p 8080:8080 --env-file runpod.env.template $IMAGE_NAME:$TAG"
+echo "📦 Building and pushing Docker image..."
+docker buildx build --platform linux/amd64 -f services/tts-worker/Dockerfile -t $REGISTRY/$IMAGE_NAME:$TAG . --push
+echo "✅ Docker image built and pushed to Docker Hub!"
 echo ""
-
-# Push to registry (if configured)
-if [ "$REGISTRY" != "your-docker-registry" ]; then
-    echo -e "${YELLOW}📤 Pushing to registry...${NC}"
-    docker tag $IMAGE_NAME:$TAG $REGISTRY/$IMAGE_NAME:$TAG
-    docker push $REGISTRY/$IMAGE_NAME:$TAG
-    echo -e "${GREEN}✅ Image pushed to registry!${NC}"
-else
-    echo -e "${YELLOW}⚠️  Registry not configured. Skipping push.${NC}"
-    echo "To push to a registry, update the REGISTRY variable in this script."
-fi
-
+echo "Next steps:"
+echo "1. Update your pod on RunPod."
+echo "2. Image: $REGISTRY/$IMAGE_NAME:$TAG"
+echo "3. Start Command: node dist/realtimeWorker.js"
+echo "4. Expose HTTP port: 8080"
+echo "5. Set environment variables."
 echo ""
-echo -e "${GREEN}🎉 Deployment preparation complete!${NC}"
-echo ""
-echo -e "${YELLOW}Next steps:${NC}"
-echo "1. Upload the Docker image to your preferred registry (Docker Hub, GHCR, etc.)"
-echo "2. Go to RunPod and create a new GPU pod"
-echo "3. Use the uploaded image as your container image" 
-echo "4. Copy environment variables from runpod.env.template to RunPod environment"
-echo "5. Set the following RunPod configuration:"
-echo "   - Container Image: your-registry/amencast-tts-worker:latest"
-echo "   - Container Start Command: npm run dev:realtime"
-echo "   - Exposed HTTP Ports: 8080"
-echo "   - GPU: Any CUDA-compatible GPU"
-echo ""
-echo -e "${YELLOW}Health Check:${NC}"
-echo "Your pod will be healthy when http://your-pod-url:8080/health returns 200"
-echo ""
-echo -e "${GREEN}Happy deploying! 🚀${NC}" 
+echo "Happy deploying! 🚀" 

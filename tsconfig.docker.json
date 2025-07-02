@@ -10,11 +10,15 @@
     "moduleResolution": "node",
     "forceConsistentCasingInFileNames": true,
     "resolveJsonModule": true,
+    "baseUrl": "/app",
+    "paths": {
+      "@/*": ["./lib/*"]
+    },
     "noEmit": false
   },
   "include": [
-    "src/**/*",
-    "../../lib/**/*"
+    "services/ingestion-worker/src/**/*",
+    "lib/**/*"
   ],
   "exclude": [
     "node_modules",

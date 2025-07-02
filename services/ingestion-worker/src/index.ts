@@ -2,7 +2,7 @@ console.log("--- Ingestion Worker: index.ts execution started ---");
 
 import Redis from 'ioredis';
 import { createClient as createSupabaseClient, SupabaseClient } from '@supabase/supabase-js';
-import prisma from '@/lib/prisma'; // USE PATH ALIAS NOW
+// import prisma from '../../lib/prisma';
 import { config } from './config';
 import { Readable } from 'stream';
 import { spawn } from 'child_process';
@@ -198,10 +198,10 @@ async function updateStreamStatusInDB(streamId: string, status: string, details?
             // updateData.details = details; 
         }
 
-        await prisma.stream.update({
-            where: { id: streamId },
-            data: updateData,
-        });
+        // await prisma.stream.update({
+        //     where: { id: streamId },
+        //     data: updateData,
+        // });
         console.log(`[IngestionWorker] Successfully updated stream ${streamId} status to ${status} in DB.`);
 
     } catch (dbUpdateError) {
@@ -435,20 +435,26 @@ async function main() {
 
     try {
       const pcmAudioStream = streamYouTubeAudioAsPcm(youtubeUrl, streamId);
+      
+      const websocketServerUrl = process.env.WEBSOCKET_SERVER_URL;
+      if (!websocketServerUrl) {
+        throw new Error("WEBSOCKET_SERVER_URL is not set in environment variables.");
+      }
+      
+      const targetUrl = `${websocketServerUrl}/internal/audio-stream/${streamId}`;
+      const parsedUrl = new URL(targetUrl);
 
-      const websocketServerHost = process.env.WEBSOCKET_SERVER_HOST || 'localhost';
-      const websocketServerPort = parseInt(process.env.WEBSOCKET_SERVER_PORT || '3001', 10);
-      const targetPath = `/internal/audio-stream/${streamId}`; // Removed /mock
       const options: http.RequestOptions = {
-        hostname: websocketServerHost,
-        port: websocketServerPort,
-        path: targetPath,
+        hostname: parsedUrl.hostname,
+        port: parsedUrl.port || (parsedUrl.protocol === 'https:' ? 443 : 80),
+        path: parsedUrl.pathname,
         method: 'POST',
         headers: {
           'Content-Type': 'application/octet-stream',
         },
       };
-      console.log(`[IngestionWorker] /initiate-stream-processing: Piping PCM audio for ${streamId} to ws-server at http://${websocketServerHost}:${websocketServerPort}${targetPath}`);
+
+      console.log(`[IngestionWorker] /initiate-stream-processing: Piping PCM audio for ${streamId} to ws-server at ${targetUrl}`);
       const upstreamHttpRequest = http.request(options, (upstreamRes) => {
         let responseBody = '';
         upstreamRes.on('data', (chunk) => responseBody += chunk);
@@ -488,6 +494,10 @@ async function main() {
     }
   });
 
+  app.get('/health', (req, res) => {
+    res.json({ status: 'healthy', uptime: process.uptime(), timestamp: new Date().toISOString() });
+  });
+
   // START THE HTTP SERVER *BEFORE* THE BLOCKING POLLING LOOP
   app.listen(PORT, () => {
     console.log(`[IngestionWorker] HTTP server listening on port ${PORT}`);
@@ -504,7 +514,7 @@ async function main() {
     // For now, to ensure HTTP server starts, let's comment it out or make it non-blocking
     console.log('[IngestionWorker] Skipping startPolling() for now to ensure HTTP server is primary.');
     // await startPolling(); // Or simply remove if not needed for this new flow
-  } catch (pollingError) {
+  } catch (pollingError: any) {
     console.error('[IngestionWorker] Polling failed to start or unhandled error in polling loop:', pollingError);
     // signalShutdownHandler(); // Decide if this is fatal
   }

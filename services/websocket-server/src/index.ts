@@ -5,16 +5,30 @@ import { Redis, RedisOptions } from 'ioredis';
 import { v4 as uuidv4 } from 'uuid';
 import { config } from './config';
 import axios from 'axios';
-import expressWs from 'express-ws';
 
 const app = express();
 const server = http.createServer(app);
-const wsInstance = expressWs(app, server);
 
-// Basic CORS setup - adjust as needed for your frontend URL in production
+// Add a health check endpoint
+app.get('/health', (req, res) => {
+  res.status(200).json({ status: 'healthy', uptime: process.uptime() });
+});
+
+const allowedOrigins = [
+  "http://localhost:3000",
+  "https://amencast.tech",
+  /https:\/\/.+\.proxy\.runpod\.net/,
+];
+
 const io = new SocketIOServer(server, {
   cors: {
-    origin: process.env.CORS_ORIGIN || "http://localhost:3000",
+    origin: (origin, callback) => {
+      if (!origin || allowedOrigins.some(o => typeof o === 'string' ? o === origin : o.test(origin))) {
+        callback(null, true);
+      } else {
+        callback(new Error('Not allowed by CORS'));
+      }
+    },
     methods: ["GET", "POST"]
   }
 });
@@ -37,16 +51,12 @@ if (config.redis.tlsEnabled) {
 
 // Initialize Redis clients with the options object
 const publisherRedis = new Redis(redisOptions);
-const subscriberRedis = new Redis(redisOptions); // Dedicated client for blocking BRPOP
-const audioSubscriberRedis = new Redis(redisOptions); // New client for Pub/Sub
+const audioSubscriberRedis = new Redis(redisOptions); // Dedicated client for blocking BRPOP
 
 console.log('[WebSocketServer] Initializing Redis clients...');
 
 publisherRedis.on('connect', () => console.log('[WebSocketServer] Publisher Redis connected.'));
 publisherRedis.on('error', (err) => console.error('[WebSocketServer] Publisher Redis error:', err));
-
-subscriberRedis.on('connect', () => console.log('[WebSocketServer] Subscriber Redis connected (for results).'));
-subscriberRedis.on('error', (err) => console.error('[WebSocketServer] Subscriber Redis error (for results):', err));
 
 audioSubscriberRedis.on('connect', () => console.log('[WebSocketServer] Audio Subscriber Redis connected.'));
 audioSubscriberRedis.on('error', (err) => console.error('[WebSocketServer] Audio Subscriber Redis error:', err));
@@ -109,14 +119,14 @@ function extractYouTubeVideoId(url: string): string | null {
  */
 async function listenForResults() {
   console.log(`[WebSocketServer] Results listener starting. Polling Redis queue: ${config.redis.resultsQueueName}`);
+  const resultSubscriber = new Redis(redisOptions);
   try {
-    // Ensure subscriberRedis is connected before starting the loop if it was lazy
-    if (subscriberRedis.status !== 'ready') {
-        await subscriberRedis.connect();
-    }
-    while (true) { // Keep polling indefinitely
+    await resultSubscriber.connect();
+    console.log('[WebSocketServer] Results Redis connected. Resuming polling.');
+    
+    while (true) { 
       try {
-        const result = await subscriberRedis.brpop(config.redis.resultsQueueName, 0); // 0 = block indefinitely
+        const result = await resultSubscriber.brpop(config.redis.resultsQueueName, 0); 
         if (result) {
           const jobResultString = result[1];
           console.log(`[WebSocketServer] Received result from queue ${result[0]}: ${jobResultString.substring(0, 300)}...`);
@@ -126,12 +136,12 @@ async function listenForResults() {
             jobResult = JSON.parse(jobResultString);
           } catch (parseError) {
             console.error('[WebSocketServer] Failed to parse result JSON from queue:', jobResultString, parseError);
-            continue; // Skip this malformed result
+            continue; 
           }
 
           if (!jobResult || !jobResult.streamId) {
             console.error('[WebSocketServer] Invalid job result format (missing streamId):', jobResult);
-            continue; // Skip invalid result
+            continue;
           }
 
           const streamId = jobResult.streamId;
@@ -146,41 +156,39 @@ async function listenForResults() {
                   targetSocket.emit('translation_result', jobResult);
                   console.log(`[WebSocketServer] Relayed 'translation_result' to socket ${socketId} for streamId ${streamId}`);
                 } else {
-                  targetSocket.emit('translation_error', jobResult); // Send a more specific error event
+                  targetSocket.emit('translation_error', jobResult); 
                   console.log(`[WebSocketServer] Relayed 'translation_error' to socket ${socketId} for streamId ${streamId}`);
                 }
               } else {
-                console.warn(`[WebSocketServer] Socket ${socketId} for streamId ${streamId} (clientRequestId ${clientRequestId}) no longer connected. Result not sent.`);
+                console.warn(`[WebSocketServer] Socket ${socketId} for streamId ${streamId} (clientRequestId ${clientRequestId}) no longer connected.`);
               }
             } else {
-              console.warn(`[WebSocketServer] No socketId found for clientRequestId ${clientRequestId} (streamId ${streamId}). Result not sent.`);
+              console.warn(`[WebSocketServer] No socketId found for clientRequestId ${clientRequestId} (streamId ${streamId}).`);
             }
-            // Clean up maps for this completed/attempted job
             streamIdToClientRequestMap.delete(streamId);
-            clientRequestToSocketIdMap.delete(clientRequestId); // Client request is now fully processed or errored
+            clientRequestToSocketIdMap.delete(clientRequestId); 
           } else {
-            console.warn(`[WebSocketServer] No clientRequestId found for streamId ${streamId}. Result not sent or already processed/cleaned up.`);
+            console.warn(`[WebSocketServer] No clientRequestId found for streamId ${streamId}.`);
           }
         }
       } catch (error: any) {
         if (error.message.includes('Connection is closed')) {
-            console.log('[WebSocketServer] Results Redis connection closed. Attempting to reconnect and restart polling...');
+            console.log('[WebSocketServer] Results Redis connection closed. Attempting to reconnect...');
             try {
-                if (subscriberRedis.status !== 'ready') await subscriberRedis.connect();
-                console.log('[WebSocketServer] Results Redis reconnected. Resuming polling.');
+                await resultSubscriber.connect();
+                console.log('[WebSocketServer] Results Redis reconnected.');
             } catch (reconnectError) {
                 console.error('[WebSocketServer] Failed to reconnect Results Redis. Waiting before retry...', reconnectError);
-                await new Promise(resolve => setTimeout(resolve, 5000)); // Wait 5s before retrying loop
+                await new Promise(resolve => setTimeout(resolve, 5000));
             }
         } else {
             console.error('[WebSocketServer] Error during BRPOP on results queue:', error);
-            await new Promise(resolve => setTimeout(resolve, 5000)); // Wait 5s before retrying loop
+            await new Promise(resolve => setTimeout(resolve, 5000));
         }
       }
     }
   } catch (initialConnectError) {
-    console.error('[WebSocketServer] CRITICAL: Failed to connect subscriberRedis for results listener. Results will not be processed.', initialConnectError);
-    // Potentially try to restart this listener after a delay
+    console.error('[WebSocketServer] CRITICAL: Failed to connect results listener.', initialConnectError);
   }
 }
 
@@ -275,43 +283,6 @@ app.post('/internal/audio-stream/:streamId', (req: express.Request, res: express
   });
 });
 
-wsInstance.app.ws('/audio-output/:streamId', (ws, req) => {
-    const streamId = req.params.streamId;
-    console.log(`[WebSocketServer] /audio-output/${streamId}: Client connected for audio stream.`);
-
-    const audioSubscriber = new Redis(redisOptions);
-    const channel = `translated_audio:${streamId}`;
-
-    audioSubscriber.subscribe(channel, (err, count) => {
-        if (err) {
-            console.error(`[WebSocketServer] Failed to subscribe to Redis channel ${channel}`, err);
-            ws.close(1011, "Failed to subscribe to audio channel.");
-            return;
-        }
-        console.log(`[WebSocketServer] Subscribed to ${channel} for audio relay.`);
-    });
-
-    audioSubscriber.on('messageBuffer', (ch, message) => {
-        if (ch.toString() === channel) {
-            if (ws.readyState === ws.OPEN) {
-                ws.send(message);
-            }
-        }
-    });
-
-    ws.on('close', () => {
-        console.log(`[WebSocketServer] /audio-output/${streamId}: Client disconnected.`);
-        audioSubscriber.unsubscribe(channel);
-        audioSubscriber.quit();
-    });
-
-    ws.on('error', (error) => {
-        console.error(`[WebSocketServer] /audio-output/${streamId}: WebSocket error.`, error);
-        audioSubscriber.unsubscribe(channel);
-        audioSubscriber.quit();
-    });
-});
-
 io.on('connection', (socket: Socket) => {
   console.log(`[WebSocketServer] Client connected: ${socket.id}`);
 
@@ -382,91 +353,49 @@ io.on('connection', (socket: Socket) => {
     console.log(`[WebSocketServer] Received 'initiate_youtube_translation' from ${socket.id}:`, data);
 
     if (!data || !data.youtubeUrl || !data.targetLanguage || !data.clientRequestId || !data.streamId) {
-      console.error('[WebSocketServer] Invalid data received for initiate_youtube_translation:', data);
-      socket.emit('request_error', { 
-        clientRequestId: data?.clientRequestId, 
-        streamId: data?.streamId,
-        message: 'Invalid request data. Ensure youtubeUrl, targetLanguage, clientRequestId, and streamId are provided.' 
-      });
+      socket.emit('request_error', { message: 'Invalid request data.' });
       return;
     }
 
     const streamIdFromClient = data.streamId;
-
     clientRequestToSocketIdMap.set(data.clientRequestId, socket.id);
     streamIdToClientRequestMap.set(streamIdFromClient, data.clientRequestId);
 
     const youtubeVideoId = extractYouTubeVideoId(data.youtubeUrl);
     if (!youtubeVideoId) {
-      console.error('[WebSocketServer] Could not extract YouTube Video ID from URL:', data.youtubeUrl);
-      socket.emit('request_error', { 
-        clientRequestId: data.clientRequestId, 
-        streamId: streamIdFromClient,
-        message: 'Invalid YouTube URL or could not extract Video ID.' 
-      });
-      clientRequestToSocketIdMap.delete(data.clientRequestId);
-      streamIdToClientRequestMap.delete(streamIdFromClient);
+      socket.emit('request_error', { message: 'Invalid YouTube URL.' });
       return;
     }
 
     try {
-      // --- START: New logic for Phase 3 ---
-      // Publish a "start" command to the control channel for the gpu-worker
       const controlCommand = {
         action: 'start',
         streamId: streamIdFromClient,
         targetLanguage: data.targetLanguage,
       };
       await publisherRedis.publish('stream_control', JSON.stringify(controlCommand));
-      console.log(`[WebSocketServer] Published START command for stream ${streamIdFromClient} to stream_control channel.`);
-      // --- END: New logic for Phase 3 ---
+      console.log(`[WebSocketServer] Published START command for stream ${streamIdFromClient}`);
+      
+      const ingestionWorkerUrl = process.env.INGESTION_WORKER_URL;
+      if (!ingestionWorkerUrl) {
+        throw new Error("INGESTION_WORKER_URL is not set.");
+      }
 
-      const ingestionWorkerHost = process.env.INGESTION_WORKER_INTERNAL_HOST || 'localhost'; // Use env vars for config
-      const ingestionWorkerPort = process.env.INGESTION_WORKER_INTERNAL_PORT || 3002;
-      const ingestionEndpoint = `http://${ingestionWorkerHost}:${ingestionWorkerPort}/initiate-stream-processing`;
-
-      console.log(`[WebSocketServer] Calling ingestion-worker endpoint for streamId ${streamIdFromClient}: ${ingestionEndpoint}`);
-
-      // Using axios for the POST request:
-      const response = await axios.post(ingestionEndpoint, {
-        youtubeUrl: data.youtubeUrl, // Send the full URL
+      console.log(`[WebSocketServer] Calling ingestion-worker: ${ingestionWorkerUrl}`);
+      const response = await axios.post(`${ingestionWorkerUrl}/initiate-stream-processing`, {
+        youtubeUrl: data.youtubeUrl,
         streamId: streamIdFromClient
       });
 
       if (response.status === 202) {
-        console.log(`[WebSocketServer] Successfully initiated stream processing with ingestion-worker for streamId ${streamIdFromClient}. Response:`, response.data);
-        socket.emit('request_processing', { // Or a new event like 'realtime_stream_initiated'
-          clientRequestId: data.clientRequestId,
-          streamId: streamIdFromClient,
-          message: 'Real-time stream processing initiated.'
-        });
+        console.log(`[WebSocketServer] Successfully initiated stream with ingestion-worker for streamId ${streamIdFromClient}.`);
+        socket.emit('request_processing', { streamId: streamIdFromClient });
       } else {
-        // This case might not be hit if axios throws for non-2xx, but good for robustness
-        console.error(`[WebSocketServer] ingestion-worker responded with status ${response.status} for streamId ${streamIdFromClient}. Data:`, response.data);
-        socket.emit('request_error', {
-          clientRequestId: data.clientRequestId,
-          streamId: streamIdFromClient,
-          message: `Failed to initiate stream processing with ingestion-worker (status ${response.status}).`
-        });
+        throw new Error(`Ingestion service returned status ${response.status}`);
       }
     } catch (error: any) {
-      console.error(`[WebSocketServer] Error calling ingestion-worker for streamId ${streamIdFromClient}:`, error.message);
-      let detailMessage = 'Server error: Could not contact ingestion service.';
-      if (axios.isAxiosError(error) && error.response) {
-          console.error('[WebSocketServer] Ingestion-worker error response data:', error.response.data);
-          detailMessage = `Ingestion service error (status ${error.response.status}): ${error.response.data?.error || error.message}`;
-      } else if (axios.isAxiosError(error) && error.request) {
-          console.error('[WebSocketServer] Ingestion-worker no response:', error.request);
-          detailMessage = 'No response from ingestion service.';
-      }
-      socket.emit('request_error', {
-        clientRequestId: data.clientRequestId,
-        streamId: streamIdFromClient,
-        message: detailMessage
-      });
-      // Consider if you need to clean up maps if the initiation fails here
-      clientRequestToSocketIdMap.delete(data.clientRequestId);
-      streamIdToClientRequestMap.delete(streamIdFromClient);
+      console.error(`[WebSocketServer] Error initiating translation for streamId ${streamIdFromClient}:`, error.message);
+      socket.emit('request_error', { message: 'Failed to start translation pipeline.' });
     }
   });
 
@@ -514,23 +443,22 @@ io.on('connection', (socket: Socket) => {
   });
 });
 
-// Connect Redis clients explicitly if lazyConnect is true
-Promise.all([
-  publisherRedis.connect().catch(err => {
-    console.error('[WebSocketServer] Failed to connect publisher Redis:', err);
-    return Promise.reject(err); // Ensure outer Promise.all fails
-  }),
-  // Do not connect subscriberRedis here if it's explicitly connected in listenForResults
-  // It's better to connect it just before its blocking loop starts.
-  audioSubscriberRedis.connect().catch(err => {
-    console.error('[WebSocketServer] Failed to connect audioSubscriberRedis:', err);
-    // This might not be critical to stop the server, but real-time audio won't work.
-  })
-]).then(() => {
-  server.listen(config.port, () => {
-    console.log(`[WebSocketServer] Express server with Socket.IO listening on http://localhost:${config.port}`);
-    // No longer starting global listeners here; they are now managed per-socket.
-  });
-}).catch(err => {
-  console.error('[WebSocketServer] Critical error during publisher Redis connection or server start. Server not started.', err);
-}); 
+async function startServer() {
+  try {
+    await Promise.all([
+      publisherRedis.connect(),
+      audioSubscriberRedis.connect(),
+    ]);
+    console.log('[WebSocketServer] All necessary Redis clients connected.');
+
+    server.listen(config.port, () => {
+      console.log(`[WebSocketServer] Express server with Socket.IO listening on http://localhost:${config.port}`);
+    });
+
+  } catch (err) {
+    console.error('[WebSocketServer] Critical error during Redis connection or server start. Server not started.', err);
+    process.exit(1);
+  }
+}
+
+startServer(); 

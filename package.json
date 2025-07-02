@@ -12,7 +12,8 @@
     "dev:stt": "npm run dev:realtime --workspace=amencast-stt-translation-worker",
     "dev:tts": "npm run dev:realtime --workspace=amencast-tts-worker",
     "test:client": "npm run test:client --workspace=websocket-server",
-    "dev:services": "concurrently \"npm:dev:websocket\" \"npm:dev:ingestion\" \"npm:dev:stt\" \"npm:dev:tts\""
+    "dev:services": "concurrently \"npm:dev:websocket\" \"npm:dev:ingestion\" \"npm:dev:stt\" \"npm:dev:tts\"",
+    "build:ingestion": "tsc --project services/ingestion-worker/tsconfig.json"
   },
   "workspaces": [
     "services/*"
@@ -21,9 +22,9 @@
     "@cartesia/cartesia-js": "^2.2.5",
     "@clerk/nextjs": "^6.21.0",
     "@hookform/resolvers": "^3.9.1",
-    "@livekit/components-react": "^2.9.12",
+    "@livekit/components-react": "^2.3.0",
     "@livekit/rtc-node": "^0.13.16",
-    "@prisma/client": "^6.7.0",
+    "@prisma/client": "^5.14.0",
     "@radix-ui/react-accordion": "1.2.2",
     "@radix-ui/react-alert-dialog": "1.1.4",
     "@radix-ui/react-aspect-ratio": "1.1.1",
@@ -67,8 +68,8 @@
     "framer-motion": "^12.16.0",
     "geist": "^1.4.2",
     "input-otp": "1.4.1",
-    "livekit-client": "^2.14.0",
-    "livekit-server-sdk": "^2.13.1",
+    "livekit-client": "^2.3.0",
+    "livekit-server-sdk": "^2.3.0",
     "lucide-react": "^0.454.0",
     "next": "15.2.4",
     "next-themes": "^0.4.4",

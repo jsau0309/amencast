@@ -28,7 +28,7 @@ async function main() {
       canPublishData: true
     });
 
-    const token = at.toJwt();
+    const token = await at.toJwt();
 
     // Connect to the room
     console.log(`Connecting to room ${roomName} as ${clientIdentity}...`);
