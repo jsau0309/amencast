@@ -143,7 +143,7 @@ export function LiveKitAudioPlayer({ streamId, onPlaybackStateChange, onError, o
     <LiveKitRoom
       token={token}
       serverUrl={serverUrl}
-      connectOptions={{ autoSubscribe: false }}
+      connectOptions={{ autoSubscribe: true }}
       audio={false}
       video={false}
       onError={handleError}
