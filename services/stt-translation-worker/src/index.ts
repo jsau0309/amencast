@@ -1,10 +1,6 @@
-// Enable LiveKit debug logging
-// process.env.DEBUG = 'lk-rtc:*,livekit:*';
-
 import { Redis, RedisOptions } from 'ioredis';
 import { config } from './config';
 import OpenAI from 'openai'; // Import OpenAI
-import { ElevenLabsClient } from 'elevenlabs'; // CORRECTED import for official 'elevenlabs' package
 import axios from 'axios'; // Import axios for downloading audio
 import fs from 'fs'; // For file operations if saving audio temporarily
 import path from 'path'; // For path operations
@@ -46,13 +42,12 @@ const inputRedisClient = new Redis(redisOptions);
 const outputRedisClient = new Redis(redisOptions); // Can use the same options if same Redis instance
 
 let openai: OpenAI | null = null;
-let elevenlabs: ElevenLabsClient | null = null; // CORRECTED type to ElevenLabsClient
 let supabase: SupabaseClient | null = null; // Declare Supabase client variable
 
 let isShuttingDown = false;
 
 /**
- * Initializes Redis, OpenAI, ElevenLabs, and Supabase clients for the GPU worker service.
+ * Initializes Redis, OpenAI, and Supabase clients for the STT worker service.
  *
  * Sets up event listeners for Redis client connections and errors, configures third-party service clients if credentials are provided, and establishes Redis connections.
  *
@@ -72,14 +67,6 @@ async function initializeClients() {
     console.warn('[GPWorker] OpenAI API Key not found. Transcription and Translation will fail.');
   }
 
-  if (config.elevenlabs.apiKey) { // Voice ID is often passed per request or set on a method
-    elevenlabs = new ElevenLabsClient({
-      apiKey: config.elevenlabs.apiKey,
-    });
-    console.log('[GPWorker] ElevenLabs client configured.');
-  } else {
-    console.warn('[GPWorker] ElevenLabs API Key not found. TTS will fail.');
-  }
 
   if (config.supabase.url && config.supabase.serviceRoleKey) {
     supabase = createClient(config.supabase.url, config.supabase.serviceRoleKey, {

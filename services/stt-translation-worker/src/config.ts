@@ -23,10 +23,6 @@ export const config = {
   openai: {
     apiKey: process.env.OPENAI_API_KEY,
   },
-  elevenlabs: {
-    apiKey: process.env.ELEVENLABS_API_KEY,
-    voiceId: process.env.ELEVENLABS_VOICE_ID || 'JBFqnCBsd6RMkjVDRZzb', // Default from previous worker.config
-  },
   assemblyai: {
     apiKey: process.env.ASSEMBLYAI_API_KEY,
   },
@@ -41,9 +37,6 @@ export const config = {
 // Basic validation (optional, but good practice)
 if (!config.openai.apiKey) {
   console.warn('[GPWorker] WARNING: OPENAI_API_KEY is not set in .env. OpenAI calls will fail.');
-}
-if (!config.elevenlabs.apiKey) {
-  console.warn('[GPWorker] WARNING: ELEVENLABS_API_KEY is not set in .env. ElevenLabs calls will fail.');
 }
 if (!config.supabase.url || !config.supabase.serviceRoleKey) {
   console.warn('[GPWorker] WARNING: SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY is not set. Supabase operations will fail.');
