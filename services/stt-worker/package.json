@@ -1,7 +1,7 @@
 {
-  "name": "amencast-tts-worker",
+  "name": "amencast-stt-worker",
   "version": "1.0.0",
-  "description": "Text-to-Speech Worker for Amencast using ElevenLabs",
+  "description": "Speech-to-Text Worker for Amencast using AssemblyAI",
   "main": "dist/index.js",
   "scripts": {
     "dev": "ts-node src/index.ts",
@@ -12,16 +12,20 @@
   },
   "keywords": [
     "amencast",
-    "tts",
+    "stt",
     "worker",
     "ai"
   ],
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "@prisma/client": "^5.14.0",
+    "@supabase/supabase-js": "^2.49.4",
+    "assemblyai": "^4.4.1",
+    "axios": "^1.9.0",
     "dotenv": "^16.4.5",
-    "elevenlabs": "^1.59.0",
-    "ioredis": "^5.6.1"
+    "ioredis": "^5.6.1",
+    "openai": "^4.100.0"
   },
   "devDependencies": {
     "@types/jest": "^29.5.11",

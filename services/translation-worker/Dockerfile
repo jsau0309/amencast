@@ -16,9 +16,6 @@ RUN npm run build
 # Stage 2: Production
 FROM node:20-slim
 
-# Install root certificates for TLS connections
-RUN apt-get update && apt-get install -y ca-certificates && rm -rf /var/lib/apt/lists/*
-
 WORKDIR /app
 
 # Copy built files and dependencies

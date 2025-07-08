@@ -216,7 +216,7 @@ app.post('/internal/audio-stream/:streamId', (req: express.Request, res: express
       );
 
       if (chunkToPublish.length === CHUNK_SIZE_BYTES) {
-        publisherRedis.publish(`audio_chunks:${streamId}`, chunkToPublish)
+        publisherRedis.publish(`audio:raw:${streamId}`, chunkToPublish)
           .then(() => {
             const offsetSeconds = (currentOffsetMs / 1000).toFixed(1);
             console.log(`[WebSocketServer] /internal/audio-stream/${streamId}: Published ${chunkToPublish.length}B chunk. Offset: ${offsetSeconds}s`);
@@ -247,7 +247,7 @@ app.post('/internal/audio-stream/:streamId', (req: express.Request, res: express
       const finalChunk = Buffer.alloc(CHUNK_SIZE_BYTES, 0); // Create a buffer of the required size, filled with silence
       remainingBuffer.copy(finalChunk); // Copy the remaining audio data into the start of it
 
-      publisherRedis.publish(`audio_chunks:${streamId}`, finalChunk)
+      publisherRedis.publish(`audio:raw:${streamId}`, finalChunk)
         .then(() => {
           const offsetSeconds = (currentOffsetMs / 1000).toFixed(1);
           console.log(`[WebSocketServer] /internal/audio-stream/${streamId}: Published FINAL padded chunk of ${finalChunk.length}B. Offset: ${offsetSeconds}s`);
@@ -277,7 +277,7 @@ app.post('/internal/audio-stream/:streamId', (req: express.Request, res: express
         action: 'ingestion_complete',
         streamId: streamId,
     };
-    publisherRedis.publish('stream_control', JSON.stringify(ingestionCompleteCommand))
+    publisherRedis.publish('stream:control', JSON.stringify(ingestionCompleteCommand))
         .then(() => console.log(`[WebSocketServer] Published INGESTION_COMPLETE command for stream ${streamId} due to ingestion client disconnect.`))
         .catch(err => console.error(`[WebSocketServer] Error publishing INGESTION_COMPLETE command for stream ${streamId} after client disconnect:`, err));
   });
@@ -295,8 +295,8 @@ io.on('connection', (socket: Socket) => {
     const audioSubscriber = new Redis(redisOptions);
     await audioSubscriber.connect();
     
-    const audioChannel = `synthesized_audio:${streamId}`;
-    const statusChannel = `stream_status:${streamId}`;
+    const audioChannel = `audio:synthesized:${streamId}`;
+    const statusChannel = `stream:status:${streamId}`;
 
     audioSubscriber.subscribe(audioChannel, statusChannel, (err, count) => {
         if (err) {
@@ -373,7 +373,7 @@ io.on('connection', (socket: Socket) => {
         streamId: streamIdFromClient,
         targetLanguage: data.targetLanguage,
       };
-      await publisherRedis.publish('stream_control', JSON.stringify(controlCommand));
+      await publisherRedis.publish('stream:control', JSON.stringify(controlCommand));
       console.log(`[WebSocketServer] Published START command for stream ${streamIdFromClient}`);
       
       const ingestionWorkerUrl = process.env.INGESTION_WORKER_URL;
@@ -436,7 +436,7 @@ io.on('connection', (socket: Socket) => {
             action: 'stop',
             streamId: streamIdToStop,
         };
-        publisherRedis.publish('stream_control', JSON.stringify(stopCommand))
+        publisherRedis.publish('stream:control', JSON.stringify(stopCommand))
             .then(() => console.log(`[WebSocketServer] Published STOP command for stream ${streamIdToStop} due to client disconnect.`))
             .catch(err => console.error(`[WebSocketServer] Error publishing STOP command for stream ${streamIdToStop}:`, err));
     }

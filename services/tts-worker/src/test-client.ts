@@ -1,152 +1,84 @@
-import { Room, RoomEvent } from '@livekit/rtc-node';
-import { AccessToken } from 'livekit-server-sdk';
-import { config } from './worker.config';
+import Redis from 'ioredis';
+import { config } from './config';
 
-/**
- * Connects to a LiveKit room as a test client, sends a translation request, and handles room events.
- *
- * This function generates an access token, connects to a predefined room, publishes a test translation request as data, listens for incoming data and connection events, and gracefully handles shutdown and errors.
- *
- * @remark The function waits 30 seconds after sending the test request before disconnecting, allowing time to receive responses.
- */
-async function main() {
-  try {
-    const roomName = 'amencast-translation-room';
-    const clientIdentity = `test-client-${Date.now()}`;
+// Test client to simulate translation output and verify TTS worker
 
-    // Create access token for the test client
-    const at = new AccessToken(config.livekit.apiKey, config.livekit.apiSecret, {
-      identity: clientIdentity,
-      name: 'Test Client'
-    });
+const redis = new Redis({
+  host: config.redis.host,
+  port: config.redis.port,
+  password: config.redis.password,
+  tls: config.redis.tlsEnabled ? {} : undefined,
+});
 
-    at.addGrant({
-      room: roomName,
-      roomJoin: true,
-      canPublish: true,
-      canSubscribe: true,
-      canPublishData: true
-    });
+const testStreamId = `test-stream-${Date.now()}`;
+const targetLanguage = process.argv[2] || 'es'; // Default to Spanish
 
-    const token = await at.toJwt();
-
-    // Connect to the room
-    console.log(`Connecting to room ${roomName} as ${clientIdentity}...`);
-    const room = new Room();
-
-    // Set up event handlers before connecting
-    console.log('Setting up event handlers...');
-
-    room.on(RoomEvent.Connected, () => {
-      console.log('Connected event triggered');
-      console.log('Room connection state:', room.connectionState);
-      console.log('Participants in room:', Array.from(room.remoteParticipants.values()).map(p => p.identity));
-      sendTestRequest();
-    });
-
-    room.on(RoomEvent.Disconnected, () => {
-      console.log('Disconnected from room');
-      process.exit(0);
-    });
-
-    room.on(RoomEvent.ConnectionStateChanged, (state) => {
-      console.log('Connection state changed:', state);
-    });
-
-    room.on(RoomEvent.DataReceived, (payload: Uint8Array, participant) => {
-      console.log('Data received from participant:', participant?.identity);
-      const decoder = new TextDecoder();
-      const data = JSON.parse(decoder.decode(payload));
-      console.log('Received data type:', data.type);
-      console.log('Full received data:', data);
-
-      // Handle audio chunks if received
-      if (data.type === 'audio_chunk') {
-        console.log('Received audio chunk, size:', data.chunk.length);
-      }
-    });
-
-    // Connect to the room
-    console.log('Attempting to connect to room...');
-    await room.connect(config.livekit.url, token, {
-      autoSubscribe: true,
-      dynacast: true
-    });
-    console.log('Connect call completed');
-
-    // Function to send a test translation request
-    async function sendTestRequest() {
-      try {
-        console.log('Preparing test request...');
-        const testRequest = {
-          type: 'translation_request',
-          sourceText: 'Hello, this is a test message. Please translate this to Spanish.',
-          sourceLanguage: 'English',
-          targetLanguage: 'Spanish',
-          requestId: `test-${Date.now()}`
-        };
-
-        console.log('Creating test request:', testRequest);
-        const encoder = new TextEncoder();
-        const payload = encoder.encode(JSON.stringify(testRequest));
-        
-        console.log('Room connection state before sending:', room.connectionState);
-        console.log('Connected participants:', Array.from(room.remoteParticipants.values()).map(p => p.identity));
-        console.log('Local participant state:', {
-          sid: room.localParticipant?.sid,
-          identity: room.localParticipant?.identity,
-          metadata: room.localParticipant?.metadata
-        });
-
-        if (!room.localParticipant) {
-          throw new Error('Local participant not available');
-        }
-
-        console.log('Publishing test request...');
-        await room.localParticipant.publishData(payload, { reliable: true });
-        console.log('Test request sent successfully');
-
-        // Add immediate confirmation check
-        console.log('Checking if data was published:', {
-          connectionState: room.connectionState,
-          participantCount: room.remoteParticipants.size
-        });
-
-        // Wait for 30 seconds to receive responses
-        setTimeout(() => {
-          console.log('Test timeout reached. Final room state:', {
-            connectionState: room.connectionState,
-            participants: Array.from(room.remoteParticipants.values()).map(p => p.identity),
-            participantSid: room.localParticipant?.sid
-          });
-          console.log('Test completed, disconnecting...');
-          room.disconnect();
-        }, 30000);
-      } catch (error) {
-        console.error('Error sending test request:', error);
-        // Wait a bit and try to disconnect
-        setTimeout(() => {
-          console.log('Disconnecting after error...');
-          room.disconnect();
-        }, 5000);
-      }
-    }
-
-    // Handle shutdown
-    process.on('SIGINT', async () => {
-      console.log('Shutting down...');
-      await room.disconnect();
-      process.exit(0);
-    });
-
-  } catch (error) {
-    console.error('Error in test client:', error);
-    process.exit(1);
+async function simulateTTS() {
+  console.log(`Starting TTS test for stream ${testStreamId} with target language: ${targetLanguage}`);
+  
+  // Subscribe to audio output
+  const subRedis = redis.duplicate();
+  await subRedis.subscribe(`audio:synthesized:${testStreamId}`);
+  
+  subRedis.on('message', (channel, message) => {
+    const result = JSON.parse(message);
+    console.log('\n=== Audio Result ===');
+    console.log(`Chunk ID: ${result.chunkId}`);
+    console.log(`Audio data length: ${result.audioData.length} chars (base64)`);
+    console.log(`Timestamp: ${new Date(result.timestamp).toISOString()}`);
+    console.log('===================\n');
+  });
+  
+  // Wait a bit for subscription
+  await new Promise(resolve => setTimeout(resolve, 1000));
+  
+  // Test translations
+  const translations = [
+    { text: "Hola, y bienvenidos a nuestro servicio de hoy.", original: "Hello, and welcome to our service today." },
+    { text: "Vamos a leer del libro de Juan, capítulo 3.", original: "We're going to be reading from the book of John, chapter 3." },
+    { text: "Porque de tal manera amó Dios al mundo que dio a su Hijo único.", original: "For God so loved the world that he gave his only Son." },
+    { text: "Oremos juntos.", original: "Let us pray together." },
+    { text: "Padre nuestro que estás en los cielos, santificado sea tu nombre.", original: "Our Father who art in heaven, hallowed be thy name." },
+    { text: "Que la gracia de nuestro Señor Jesucristo sea con todos ustedes.", original: "May the grace of our Lord Jesus Christ be with you all." }
+  ];
+  
+  // Send test translations
+  for (let i = 0; i < translations.length; i++) {
+    const translationMessage = {
+      streamId: testStreamId,
+      chunkId: `chunk-${i}`,
+      sourceText: translations[i].original,
+      translatedText: translations[i].text,
+      timestamp: Date.now(),
+      languageTarget: targetLanguage
+    };
+    
+    await redis.publish(`text:translated:${testStreamId}`, JSON.stringify(translationMessage));
+    console.log(`Sent translation ${i + 1}: "${translations[i].text.substring(0, 50)}..."`);
+    
+    // Wait between translations
+    await new Promise(resolve => setTimeout(resolve, 3000));
   }
+  
+  // Send stop message
+  await redis.publish('stream_control', JSON.stringify({
+    action: 'stop',
+    streamId: testStreamId
+  }));
+  
+  console.log('\nTest complete. Waiting for final audio chunks...');
+  
+  // Wait for final audio
+  await new Promise(resolve => setTimeout(resolve, 5000));
+  
+  // Cleanup
+  await subRedis.disconnect();
+  await redis.disconnect();
+  process.exit(0);
 }
 
-// Run the test client
-main().catch(error => {
-  console.error('Unhandled error:', error);
+// Run the test
+simulateTTS().catch(error => {
+  console.error('Test failed:', error);
   process.exit(1);
 });
